@@ -1,0 +1,27 @@
+{
+  "guild_id": "YOUR_SERVER_ID",
+  "features": ["scheduler", "mcstatus_alert", "modflag", "purge_mine", "translate", "verify"],
+  "message_content_intent": true,
+  "scheduler": {
+    "timezone": "America/New_York",
+    "posts": [
+      {"channel_id": "CHANNEL_ID", "days": ["mon"], "time": "09:00", "message": "📅 Weekly check-in: what are you working on this week?"}
+    ]
+  },
+  "mcstatus": {"address": "play.example.com", "channel_id": "CHANNEL_ID", "interval_seconds": 60},
+  "modflag": {"mod_channel_id": "MOD_CHANNEL_ID"},
+  "translate": {
+    "backend": "libretranslate",
+    "libretranslate_url": "http://127.0.0.1:5000/translate",
+    "default_target": "en",
+    "max_chars": 1500,
+    "channels": {"CHANNEL_ID": "en"}
+  },
+  "verify": {
+    "role_id": "VERIFIED_ROLE_ID",
+    "log_channel_id": "MOD_CHANNEL_ID",
+    "captcha": true,
+    "title": "Verification",
+    "text": "Click **Verify** to get access to the server."
+  }
+}

@@ -1,0 +1,34 @@
+# Secrets and local config
+.env
+config.json
+config.json.bak
+*.bak
+answers.json
+
+# Client deployments (tokens live here)
+clients/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+lt-venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Runtime / host state
+state/
+*.log
+*.lock
+.host.lock
+.disabled
+.restart
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
