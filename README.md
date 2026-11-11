@@ -21,6 +21,10 @@ A modular Python Discord bot (discord.py 2.x). One codebase, and each server get
 | `purge_mine` | Members delete **their own** messages in a channel, including ones older than 14 days | `/purge_mine limit older_than_days` |
 | `translate` | Auto-translates messages in chosen channels, plus a right-click Translate menu. Uses LibreTranslate (default) or DeepL | Apps → **Translate** |
 | `verify` | A Verify button grants a role, with an optional math captcha. Attempts are logged to a mod channel, and the button keeps working after restarts | `/verify_setup` (admins) |
+| `tickets` | Members open a private thread or channel for staff, from a button or `/ticket`. Staff can close it. The buttons keep working after restarts | `/ticket`, `/ticket_close`, `/ticket_setup` (admins) |
+| `welcome` | Posts a configurable message when a member joins | automatic |
+| `server_logs` | Posts joins, leaves, message deletes, message edits, and role changes to a log channel | automatic |
+| `rolemenu` | Members add or remove allowed roles from a button row or select menu. The menu keeps working after restarts | `/rolemenu_setup` (admins) |
 
 ## Quick setup: the wizard (recommended)
 
@@ -33,9 +37,9 @@ python setup_wizard.py
 The wizard builds `config.json` and `.env` for a new client:
 
 1. Asks for the bot token with hidden input and writes it **only** to `.env` (other `.env` lines such as `DEEPL_API_KEY` are kept). The token is never printed or written to `config.json`.
-2. Checks the token against Discord (`GET /users/@me`) and prints the invite URL (scopes `bot` + `applications.commands`, permissions `268528640` = View Channels, Send Messages, Manage Messages, Embed Links, Read Message History, Manage Roles).
+2. Checks the token against Discord (`GET /users/@me`) and prints the invite URL (scopes `bot` + `applications.commands`, permissions `361045781648` = View Channels, Send Messages, Manage Messages, Embed Links, Read Message History, Manage Roles, Manage Channels, View Audit Log, Manage Threads, Create Private Threads, Send Messages in Threads).
 3. Lists the servers the bot is in, then that server's text channels and roles, so you pick by number.
-4. Asks which of the 6 features to enable and their settings: scheduler posts, Minecraft address, mod channel, verify role (pick one, or type `c` to create a `Verified` role through the API), and the translate backend URL (it can test the URL for you).
+4. Asks which of the 10 features to enable and their settings: scheduler posts, Minecraft address, mod channel, verify role (pick one, or type `c` to create a `Verified` role through the API), ticket staff role and whether tickets are private threads or channels, welcome channel and message, log channel, role-menu roles, and the translate backend URL (it can test the URL for you).
 5. Writes `config.json`. If one already exists, it is first copied to `config.json.bak`.
 
 The bot has to be invited to the server before you run the wizard. If it's in no servers yet, the wizard prints the invite URL and stops.
@@ -59,9 +63,11 @@ Run these from the `botkit/` directory (`requirements.txt`, `bot.py`, and `setup
 
 ### Discord Developer Portal
 1. Create an application, add a Bot and copy its token into `.env`.
-2. Under **Privileged Gateway Intents**, enable **Message Content** if you use `translate` auto-translation. This must match `"message_content_intent": true` in config.
-3. Invite the bot with scopes `bot` + `applications.commands`. Permissions: Send Messages, Embed Links, Read Message History, plus Manage Messages (`purge_mine`) and Manage Roles (`verify`).
-4. For `verify`: in Server Settings → Roles, drag the bot's role **above** the verified role.
+2. Under **Privileged Gateway Intents**:
+   - Enable **Message Content** only if you use `translate` auto-translation. This must match `"message_content_intent": true`. `server_logs` does not need it. Deletes and edits are logged from gateway events, and message text is included only when the intent is already on and the message is cached.
+   - Enable **Server Members** if you use `welcome` or `server_logs`. This must match `"members_intent": true` (the wizard sets that when either feature is on, and the bot also turns the intent on if those features are listed). Discord disconnects with "Disallowed intent" if the portal toggle is off while the bot requests the intent.
+3. Invite the bot with scopes `bot` + `applications.commands`. The wizard URL asks for View Channels, Send Messages, Embed Links, Read Message History, Manage Messages (`purge_mine`), Manage Roles (`verify`, `rolemenu`), Manage Channels (`tickets` channel mode), View Audit Log (`server_logs`), and for thread tickets: Create Private Threads, Send Messages in Threads, and Manage Threads.
+4. For `verify` and `rolemenu`: in Server Settings → Roles, drag the bot's role **above** every role it assigns. For thread tickets, give staff **Manage Threads** on the parent channel so they can see private threads. Channel-mode tickets grant the staff role access on each ticket channel instead.
 
 ## Configuration (`config.json`)
 
@@ -69,7 +75,8 @@ Run these from the `botkit/` directory (`requirements.txt`, `bot.py`, and `setup
 |---|---|
 | `features` | Cogs to load (file names in `cogs/` without `.py`) |
 | `guild_id` | Your server ID. Slash commands sync to it instantly. Remove it for global sync (can take up to an hour) |
-| `message_content_intent` | `true` is needed for `translate` auto-translation |
+| `message_content_intent` | `true` is needed for `translate` auto-translation. Not required for server logs |
+| `members_intent` | `true` for `welcome` and `server_logs` (joins, leaves, role changes). Must match the Server Members intent in the Developer Portal |
 | `scheduler.timezone` / `posts[]` | IANA time zone. Each post has `channel_id`, `days` (`mon`…`sun`), `time` (`HH:MM`, 24 h), `message` |
 | `mcstatus.address` / `channel_id` / `interval_seconds` | Server address (`host` or `host:port`), alert channel, poll interval |
 | `modflag.mod_channel_id` | Where flagged messages go |
@@ -79,6 +86,15 @@ Run these from the `botkit/` directory (`requirements.txt`, `bot.py`, and `setup
 | `translate.default_target` / `max_chars` | Target for the right-click menu (default `en`), and the per-message length cap |
 | `verify.role_id` / `log_channel_id` / `captcha` | Role to grant, mod log channel (optional), and `true` for the math-captcha modal |
 | `verify.title` / `text` | Text of the verification embed |
+| `tickets.staff_role_id` / `mode` | Staff who can close tickets. `mode` is `thread` (default) or `channel` |
+| `tickets.channel_id` | Parent channel for private threads. Required when `mode` is `thread` |
+| `tickets.category_id` | Category for private ticket channels. Required when `mode` is `channel` (`channel_id` is not used) |
+| `tickets.title` / `text` | Text of the ticket panel |
+| `welcome.channel_id` / `message` | Join message. Placeholders: `{member}` (mention), `{name}`, `{server}`, `{count}`. Bots are skipped. Leaves are not posted here |
+| `server_logs.channel_id` / `events` | Log channel. `events` is any of `join`, `leave`, `delete`, `edit`, `roles` (default: all of them) |
+| `rolemenu.style` | `buttons` (each click toggles one role) or `select` (the selection is the set of menu roles the member keeps) |
+| `rolemenu.roles[]` | Up to 25 roles. Each has `role_id`, `label`, and an optional `emoji` |
+| `rolemenu.title` / `text` | Text of the role-menu embed |
 
 Translation keys come only from the environment: `DEEPL_API_KEY` (Free keys ending in `:fx` automatically use the free endpoint) and `LIBRETRANSLATE_API_KEY`. The public libretranslate.com instance needs a paid API key. A self-hosted LibreTranslate server is free.
 
@@ -137,7 +153,7 @@ Supervisor (`host.py`), from the repository root:
 python -m unittest discover -s tests -v
 ```
 
-Kit (translate routing, the verify role path, and the setup wizard), from `botkit/`:
+Kit (translate routing, the verify role path, tickets, welcome, server logs, role menus, and the setup wizard), from `botkit/`:
 
 ```
 python -m unittest discover -s tests -v
@@ -148,8 +164,11 @@ GitHub Actions runs both on every push and pull request to `main` (Python 3.10 a
 ## Troubleshooting
 - **Slash commands missing:** check `guild_id`, then restart. Global sync can take up to an hour.
 - **Translate does nothing:** Message Content intent must be on in the portal **and** in config, the channel ID must be in `translate.channels`, and check the logs for backend errors (bad URL or key).
-- **Verify says it can't give the role:** give the bot Manage Roles and move its role above the verified role.
+- **Verify or the role menu can't change a role:** give the bot Manage Roles and move its role above the roles it assigns. After editing `rolemenu.roles` or `style`, run `/rolemenu_setup` again. A menu already posted keeps working across restarts while those roles stay in config.
 - **No MC alerts:** the first check only records the state, so alerts fire on the next change. Test with `/mcstatus`.
+- **Tickets don't open:** thread mode needs Create Private Threads, Send Messages in Threads, and Manage Threads. Channel mode needs Manage Channels and a category id. Staff see private threads only with Manage Threads on the parent channel.
+- **Welcome or join/leave/role logs never fire:** turn on Server Members in the Developer Portal. `"members_intent"` must be true, or `welcome` / `server_logs` must be in `features` (the bot requests the intent either way).
+- **Deleted or edited text says "content unavailable":** that is expected without Message Content. The log still records the event, and edits include a jump link. A "Deleted by" line needs View Audit Log; members who delete their own messages usually leave no audit entry.
 
 ## License
 

@@ -39,7 +39,8 @@ Get-Content clients\demo\logs\bot.log -Wait -Tail 20   # live tail
 
 ### Add a client
 1. The client creates a bot in the Discord Developer Portal, turns on **Message Content** intent if
-   they use translate, and invites it (the wizard prints the invite URL).
+   they use translate, turns on **Server Members** if they use welcome messages or server logs, and
+   invites it (the wizard prints the invite URL).
 2. Run the wizard into a new client folder. It asks for the token with hidden input and writes it
    only to `clients\<name>\.env`:
    ```powershell
@@ -60,7 +61,7 @@ then move its folder out of `clients\` (keep a backup of `.env`/`config.json`).
 Replace files in `botkit\`, run the tests, then restart each client (`host.py restart <name>`), or
 restart everything with `Stop-ScheduledTask 'BotKit Host'; Start-ScheduledTask 'BotKit Host'`.
 ```powershell
-cd A:\botkit-host\botkit; ..\venv\Scripts\python.exe -m unittest discover -s tests   # 32 kit tests
+cd A:\botkit-host\botkit; ..\venv\Scripts\python.exe -m unittest discover -s tests   # 59 kit tests
 cd A:\botkit-host;        .\venv\Scripts\python.exe -m unittest discover -s tests   # 18 host tests
 ```
 Note: several restarts in a row can make Discord rate-limit the slash-command sync. The bot then

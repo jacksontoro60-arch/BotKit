@@ -15,7 +15,11 @@ CONFIG = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 intents = discord.Intents.default()
-intents.message_content = CONFIG.get("message_content_intent", False)
+# Message Content is only for translate auto-translation. Welcome and server logs need
+# the members intent (joins, leaves, role changes). Deletes and edits use gateway events.
+intents.message_content = bool(CONFIG.get("message_content_intent", False))
+_features = set(CONFIG.get("features") or [])
+intents.members = bool(CONFIG.get("members_intent", False)) or bool(_features & {"welcome", "server_logs"})
 
 class BotKit(commands.Bot):
     def __init__(self):
