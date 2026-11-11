@@ -29,7 +29,7 @@ The wizard builds `config.json` and `.env` for a new client:
 
 The bot has to be invited to the server before you run the wizard. If it's in no servers yet, the wizard prints the invite URL and stops.
 
-Options: `--config-out PATH`, `--env-out PATH`, `--no-env` (don't write the token), `--no-create-role` (read-only use of the API), and `--answers answers.json` (or `--non-interactive --answers ...`) to read every answer from a JSON file. The answers format is documented at the top of `setup_wizard.py`. Channels and roles can be given as an ID, a name, or a list number, and the token is read from `DISCORD_TOKEN` (or `token_env`). Example of a safe dry run that leaves the real config alone:
+Options: `--config-out PATH`, `--env-out PATH`, `--no-env` (don't write the token), `--no-create-role` (read-only use of the API), and `--answers answers.json` (or `--non-interactive --answers ...`) to read every answer from a JSON file. The answers format is documented at the top of `setup_wizard.py`. Channels and roles can be given as an ID, a name, or a list number, and the token is read from `DISCORD_TOKEN` (or `token_env`). Passing `--answers` still checks the token with Discord before it writes files. Example that writes a throwaway config and leaves `.env` alone:
 
 ```
 python setup_wizard.py --answers answers.json --config-out /tmp/config.test.json --no-env --no-create-role
@@ -84,9 +84,9 @@ curl -s -X POST http://127.0.0.1:5000/translate -H "Content-Type: application/js
 ```
 For 24/7 use, make it a systemd service (`ExecStart=/home/USER/lt-venv/bin/libretranslate --host 127.0.0.1 --port 5000 --load-only en,es,fr,de,pt,ja`, `Restart=always`). With Docker instead: `docker run -d --restart unless-stopped -p 127.0.0.1:5000:5000 -e LT_LOAD_ONLY=en,es,fr,de,pt,ja libretranslate/libretranslate`.
 
-**Windows (e.g. ToroPc), in PowerShell:**
+**Windows, in PowerShell:**
 ```powershell
-cd A:\hive\workspace
+cd C:\botkit
 py -m venv lt-venv
 .\lt-venv\Scripts\pip install libretranslate
 .\lt-venv\Scripts\libretranslate --host 127.0.0.1 --port 5000 --load-only en,es,fr,de,pt,ja --threads 2
@@ -95,7 +95,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/translate -ContentType
 ```
 - If the bot runs on the **same** Windows PC, use `http://127.0.0.1:5000/translate`.
 - If the bot runs on **another machine on your LAN**, start LibreTranslate with `--host <the PC's LAN IP>` (for example `192.168.1.50`) and allow the port only from the local subnet: `New-NetFirewallRule -DisplayName "LibreTranslate LAN" -Direction Inbound -Protocol TCP -LocalPort 5000 -RemoteAddress LocalSubnet -Action Allow`. Then set the URL to `http://192.168.1.50:5000/translate`. Don't add a router port-forward.
-- To start it automatically, create a Task Scheduler task "At log on" that runs `A:\hive\workspace\lt-venv\Scripts\libretranslate.exe` with the same arguments (or wrap it in NSSM to run it as a service).
+- To start it automatically, create a Task Scheduler task "At log on" that runs `C:\botkit\lt-venv\Scripts\libretranslate.exe` with the same arguments (or wrap it in NSSM to run it as a service).
 - Optional: to require a key, run with `--api-keys` and put `LIBRETRANSLATE_API_KEY=...` in the bot's `.env`.
 
 Then set it in `config.json`: add `"translate"` to `features`, set `"libretranslate_url": "http://127.0.0.1:5000/translate"`, map channels in `translate.channels`, and restart the bot.
@@ -115,7 +115,14 @@ Then set it in `config.json`: add `"translate"` to `features`, set `"libretransl
 Drop `cogs/myfeature.py` with an `async def setup(bot)` and add `"myfeature"` to `features`. Settings live under your own config key and are read from `bot.config`.
 
 ## Tests
-`python -m unittest discover -s tests -v` runs offline mock tests of translate routing, the verify role path, and the setup wizard (Discord API calls are mocked). It needs no token and no network.
+
+From this directory:
+
+```
+python -m unittest discover -s tests -v
+```
+
+That runs offline mock tests of translate routing, the verify role path, and the setup wizard (Discord API calls are mocked). It needs no token and no network. The supervisor suite is the same command from the repository root (`tests/`). GitHub Actions runs both.
 
 ## Troubleshooting
 - **Slash commands missing:** check `guild_id`, then restart. Global sync can take up to an hour.
