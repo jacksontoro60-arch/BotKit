@@ -34,9 +34,15 @@ def render_welcome(template, *, mention, server, name, count) -> str:
 class Welcome(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        cfg = bot.config.get("welcome", {})
-        self.channel_id = int(cfg["channel_id"])
-        self.message = cfg.get("message") or DEFAULT_MESSAGE
+        self.apply_config()
+
+    def apply_config(self):
+        """Re-read welcome settings. Called at startup and after /settings set."""
+        cfg = self.bot.config.get("welcome") or {}
+        channel_id = int(cfg["channel_id"])
+        message = cfg.get("message") or DEFAULT_MESSAGE
+        self.channel_id = channel_id
+        self.message = message
 
     def _channel(self, guild):
         channel = None

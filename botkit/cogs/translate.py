@@ -108,14 +108,22 @@ def same_language(src, target) -> bool:
 class Translate(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        cfg = bot.config.get("translate", {})
-        self.channels = {str(k): v for k, v in cfg.get("channels", {}).items()}
-        self.default_target = cfg.get("default_target", "en")
-        self.max_chars = int(cfg.get("max_chars", 1500))
         self._session = None
-        self.backend = make_backend(cfg, self._get_session)
+        self.apply_config()
         self.menu = app_commands.ContextMenu(name="Translate", callback=self.translate_menu)
         bot.tree.add_command(self.menu)
+
+    def apply_config(self, env=None):
+        """Re-read routing and rebuild the backend. API keys stay in the environment."""
+        cfg = self.bot.config.get("translate") or {}
+        channels = {str(k): v for k, v in (cfg.get("channels") or {}).items()}
+        default_target = cfg.get("default_target", "en")
+        max_chars = int(cfg.get("max_chars", 1500))
+        backend = make_backend(cfg, self._get_session, env=os.environ if env is None else env)
+        self.channels = channels
+        self.default_target = default_target
+        self.max_chars = max_chars
+        self.backend = backend
 
     async def _get_session(self):
         if self._session is None or self._session.closed:

@@ -25,6 +25,7 @@ class BotKit(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
         self.config = CONFIG
+        self.config_path = CONFIG_PATH
 
     async def setup_hook(self):
         for name in CONFIG.get("features", []):

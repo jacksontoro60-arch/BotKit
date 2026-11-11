@@ -6,9 +6,13 @@ from discord.ext import commands
 class ModFlag(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.mod_channel_id = int(bot.config["modflag"]["mod_channel_id"])
+        self.apply_config()
         self.menu = app_commands.ContextMenu(name="Flag for mods", callback=self.flag)
         bot.tree.add_command(self.menu)
+
+    def apply_config(self):
+        """Re-read the mod channel. Called at startup and after /settings set."""
+        self.mod_channel_id = int(self.bot.config["modflag"]["mod_channel_id"])
 
     async def cog_unload(self):
         self.bot.tree.remove_command(self.menu.name, type=self.menu.type)

@@ -7,12 +7,19 @@ from mcstatus import JavaServer
 class MCStatus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        cfg = bot.config.get("mcstatus", {})
-        self.address = cfg["address"]
-        self.channel_id = int(cfg["channel_id"])
         self.online = None
-        self.check.change_interval(seconds=int(cfg.get("interval_seconds", 60)))
+        self.apply_config()
         self.check.start()
+
+    def apply_config(self):
+        """Re-read the address, channel, and poll interval without resetting online/offline state."""
+        cfg = self.bot.config.get("mcstatus") or {}
+        address = cfg["address"]
+        channel_id = int(cfg["channel_id"])
+        interval = int(cfg.get("interval_seconds", 60))
+        self.address = address
+        self.channel_id = channel_id
+        self.check.change_interval(seconds=interval)
 
     def cog_unload(self):
         self.check.cancel()

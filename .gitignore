@@ -2,7 +2,9 @@
 .env
 config.json
 config.json.bak
+config.json.tmp
 *.bak
+*.tmp
 answers.json
 
 # Client deployments (tokens live here)

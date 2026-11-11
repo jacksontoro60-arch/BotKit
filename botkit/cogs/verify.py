@@ -92,12 +92,21 @@ class VerifyView(discord.ui.View):
 class Verify(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        cfg = bot.config.get("verify", {})
-        self.role_id = int(cfg["role_id"])
-        self.log_channel_id = int(cfg.get("log_channel_id") or 0) or None
-        self.captcha = bool(cfg.get("captcha", False))
-        self.title = cfg.get("title", "Verification")
-        self.text = cfg.get("text", "Click **Verify** to get access to the server.")
+        self.apply_config()
+
+    def apply_config(self):
+        """Re-read verify settings. Called at startup and after /settings set."""
+        cfg = self.bot.config.get("verify") or {}
+        role_id = int(cfg["role_id"])
+        log_channel_id = int(cfg.get("log_channel_id") or 0) or None
+        captcha = bool(cfg.get("captcha", False))
+        title = cfg.get("title", "Verification")
+        text = cfg.get("text", "Click **Verify** to get access to the server.")
+        self.role_id = role_id
+        self.log_channel_id = log_channel_id
+        self.captcha = captcha
+        self.title = title
+        self.text = text
 
     async def cog_load(self):
         self.bot.add_view(VerifyView(self))  # re-attach to buttons posted before a restart
