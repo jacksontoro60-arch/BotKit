@@ -148,7 +148,7 @@ From this directory:
 python -m unittest discover -s tests -v
 ```
 
-That runs offline mock tests of translate routing, the verify role path, tickets, welcome, server logs, role menus, in-Discord settings, and the setup wizard (Discord API calls are mocked). It needs no token and no network. The supervisor suite is the same command from the repository root (`tests/`). GitHub Actions runs both.
+That runs offline mock tests of translate routing, the verify role path, tickets, welcome, server logs, role menus, in-Discord settings, and the setup wizard (Discord API calls are mocked). It needs no token and no network. The supervisor suite, including the local dashboard, is the same command from the repository root (`tests/`). `python host.py dashboard` from that root serves a loopback status page; see the root README and `HOSTING.md`. GitHub Actions runs both.
 
 ## Troubleshooting
 - **Slash commands missing:** check `guild_id`, then restart. Global sync can take up to an hour.
