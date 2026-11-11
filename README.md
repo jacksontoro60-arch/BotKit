@@ -7,7 +7,7 @@ A modular Python Discord bot (discord.py 2.x). One codebase, and each server get
 ## Repository layout
 
 - `botkit/` — Discord bot product (run `bot.py` / `setup_wizard.py` from here)
-- `host.py`, `HOSTING.md`, `install-tasks.ps1` — optional multi-client supervisor
+- `host.py`, `HOSTING.md`, `install-tasks.ps1` — optional multi-client supervisor and its local dashboard
 - `tests/` — supervisor tests; kit tests live in `botkit/tests/`
 
 
@@ -139,6 +139,18 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:5000/translate -ContentType
 
 Then set it in `config.json`: add `"translate"` to `features`, set `"libretranslate_url": "http://127.0.0.1:5000/translate"`, map channels in `translate.channels`, and restart the bot.
 
+## Local host dashboard
+
+From the repository root, with the supervisor running in another terminal (`python host.py run`):
+
+```
+python host.py dashboard
+```
+
+Open http://127.0.0.1:8765. The page lists each client, its state, uptime or last exit, and a short log tail. Start, stop, and restart use the same control files as `python host.py start`, `stop`, and `restart`.
+
+It listens on 127.0.0.1 unless you pass `--host`. Any other address prints a warning: that interface can see status and control the bots. Do not expose it. Task Scheduler and systemd examples are in [HOSTING.md](HOSTING.md). `install-tasks.ps1` still only registers the supervisor and LibreTranslate.
+
 ## Hosting (24/7)
 
 - **Self-host:** any small Linux VPS (512 MB–1 GB is plenty). Run the bot as a systemd service with `Restart=always`:
@@ -157,7 +169,7 @@ Drop `cogs/myfeature.py` with an `async def setup(bot)` and add `"myfeature"` to
 
 Both suites are offline. Discord calls are mocked, and they need no token and no network.
 
-Supervisor (`host.py`), from the repository root:
+Supervisor and local dashboard (`host.py`), from the repository root:
 
 ```
 python -m unittest discover -s tests -v

@@ -2,7 +2,7 @@
 Run from the host folder:  python -m unittest discover -s tests -v
 Fake bots are tiny python scripts, so nothing touches Discord.
 """
-import io, json, os, subprocess, sys, tempfile, time, unittest
+import http.client, io, json, os, socket, subprocess, sys, tempfile, threading, time, unittest, urllib.parse
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -305,6 +305,315 @@ class BotPy(unittest.TestCase):
             r = subprocess.run([sys.executable, "-c", code, str(bot_dir)], env=env, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("utf-8 True True", r.stdout)
+
+
+# Built at runtime so the source file does not contain a contiguous token.
+# GitHub secret scanning treats a realistic Discord token as a live secret.
+TOKEN = ("q" * 24) + "." + ("r" * 6) + "." + ("s" * 27)
+MFA_TOKEN = "mfa." + ("m" * 26)
+BEARER_TOKEN = "sk-" + ("k" * 20)
+ENV_SENTINEL = "ENV_SENTINEL_do_not_leak"
+DEEPL_SENTINEL = "deepl-secret-value"
+
+
+class Dashboard(HostTestCase):
+    def setUp(self):
+        super().setUp()
+        self.httpd = None
+        self.thread = None
+        self.token = "csrf-test-token-value"
+
+    def tearDown(self):
+        if self.httpd is not None:
+            self.httpd.shutdown()
+            if self.thread is not None:
+                self.thread.join(5)
+            self.httpd.server_close()
+        super().tearDown()
+
+    def start_dash(self):
+        self.httpd = host.serve_dashboard(self.paths, "127.0.0.1", 0, token=self.token)
+        self.port = self.httpd.server_address[1]
+        self.assertEqual(self.httpd.server_address[0], "127.0.0.1")
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                status, _, _ = self.request("GET", "/")
+                if status == 200:
+                    return
+            except OSError:
+                time.sleep(0.02)
+        self.fail("dashboard did not accept a connection")
+
+    def request(self, method, path, body=None, headers=None):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request(method, path, body=body, headers=headers or {})
+            resp = conn.getresponse()
+            raw = resp.read()
+            return resp.status, {k.lower(): v for k, v in resp.getheaders()}, raw.decode("utf-8", "replace")
+        finally:
+            conn.close()
+
+    def post_control(self, name, action, csrf=None, extra_headers=None):
+        fields = {"name": name, "action": action}
+        if csrf is not None:
+            fields["csrf"] = csrf
+        data = urllib.parse.urlencode(fields)
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        if extra_headers:
+            headers.update(extra_headers)
+        return self.request("POST", "/control", body=data, headers=headers)
+
+    def test_redact_secrets_and_cli_logs(self):
+        text = "\n".join([
+            "online as DemoBot",
+            "token-in-env: False",
+            "[host] started pid 1234",
+            f"saw {TOKEN}",
+            "DISCORD_TOKEN=fake",
+            f"DEEPL_API_KEY={DEEPL_SENTINEL}",
+            "LIBRETRANSLATE_API_KEY=lt-secret",
+            MFA_TOKEN,
+            "Authorization: Bearer " + BEARER_TOKEN,
+            'loaded "discord_token": "abc123"',
+        ])
+        out = host.redact_secrets(text)
+        self.assertIn("online as DemoBot", out)
+        self.assertIn("token-in-env: False", out)
+        self.assertIn("[host] started pid 1234", out)
+        for secret in (TOKEN, "fake", DEEPL_SENTINEL, "lt-secret", "abc123", MFA_TOKEN, BEARER_TOKEN):
+            self.assertNotIn(secret, out)
+        self.assertIn("[redacted]", out)
+
+        d = self.client("demo")
+        (d / ".env").write_text(
+            f"DISCORD_TOKEN={ENV_SENTINEL}\nPLAIN_MARKER_do_not_show came from dotenv\n",
+            encoding="utf-8")
+        (d / "logs" / "bot.log").write_text(text + "\n", encoding="utf-8")
+        tail = host.client_log_tail(self.paths, "demo", 40)
+        self.assertIn("online as DemoBot", tail)
+        self.assertNotIn(TOKEN, tail)
+        self.assertNotIn(ENV_SENTINEL, tail)
+        self.assertNotIn("PLAIN_MARKER_do_not_show", tail)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = host.main(["--root", str(self.root), "logs", "demo", "-n", "40"])
+        logged = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("online as DemoBot", logged)
+        self.assertNotIn(TOKEN, logged)
+        self.assertNotIn(DEEPL_SENTINEL, logged)
+        logf = d / "logs" / "bot.log"
+        logf.unlink()
+        logf.symlink_to(d / ".env")
+        self.assertIsNone(host.client_log_tail(self.paths, "demo", 40))
+        page = host.render_dashboard(self.paths, self.token)
+        self.assertNotIn(ENV_SENTINEL, page)
+        self.assertNotIn("PLAIN_MARKER_do_not_show", page)
+
+    def test_page_shows_live_state_without_secrets(self):
+        now = 1_700_000_000.0
+        d = self.client("demo")
+        self.client("boom")
+        self.client("partial", env=False)
+        (self.paths.clients / "<img onerror=x>").mkdir()
+        (d / ".env").write_text(
+            f"DISCORD_TOKEN={ENV_SENTINEL}\nDEEPL_API_KEY={DEEPL_SENTINEL}\n"
+            "PLAIN_MARKER_do_not_show came from dotenv\n", encoding="utf-8")
+        (d / "config.json").write_text(
+            json.dumps({"mode": "ok", "note": "CONFIG_MARKER_do_not_show"}), encoding="utf-8")
+        (d / "logs" / "bot.log").write_text(f"online as DemoBot\nsaw {TOKEN}\n", encoding="utf-8")
+        self.paths.state.mkdir()
+        (self.paths.state / "status.json").write_text(json.dumps({
+            "supervisor_pid": 42,
+            "updated": now,
+            "clients": {
+                "demo": {"state": "running", "pid": 4242, "started": now - 125, "restarts": 1,
+                         "failures": 0, "last_exit": None},
+                "boom": {"state": "backoff", "pid": None, "started": None, "restarts": 4,
+                         "failures": 4, "last_exit": 7, "next_start": now + 9},
+            },
+        }), encoding="utf-8")
+        view = host.status_view(self.paths, now=now)
+        by = {r["name"]: r for r in view["rows"]}
+        self.assertEqual(by["demo"]["label"], "running")
+        self.assertEqual(by["demo"]["uptime"], "2m")
+        self.assertEqual(by["demo"]["pid"], 4242)
+        self.assertEqual(by["boom"]["state"], "backoff")
+        self.assertEqual(by["boom"]["label"], "crashed")
+        self.assertEqual(by["boom"]["last_exit"], 7)
+        self.assertIn("retry in 9s", by["boom"]["notes"])
+        self.assertIn("missing .env", by["partial"]["notes"])
+        page = host.render_dashboard(self.paths, self.token, lines=40, bind_host="127.0.0.1",
+                                     bind_port=8765, now=now)
+        self.assertIn('data-client="demo" data-state="running"', page)
+        self.assertIn('data-client="boom" data-state="backoff"', page)
+        self.assertIn(">crashed<", page)
+        self.assertIn(">2m<", page)
+        self.assertIn(">4242<", page)
+        self.assertIn(">7<", page)
+        self.assertIn("retry in 9s", page)
+        self.assertIn("online as DemoBot", page)
+        self.assertNotIn(TOKEN, page)
+        self.assertNotIn(ENV_SENTINEL, page)
+        self.assertNotIn(DEEPL_SENTINEL, page)
+        self.assertNotIn("PLAIN_MARKER_do_not_show", page)
+        self.assertNotIn("CONFIG_MARKER_do_not_show", page)
+        self.assertIn("[redacted]", page)
+        self.assertNotIn("<img", page)
+        self.assertIn("&lt;img", page)
+        self.assertIn("value=\"csrf-test-token-value\"", page)
+        stale = host.status_view(self.paths, now=now + 30)
+        self.assertFalse(stale["alive"])
+        self.assertEqual({r["name"]: r["state"] for r in stale["rows"]}["demo"], "-")
+
+    def test_apply_control_drives_the_supervisor(self):
+        d = self.client("demo")
+        sup = self.supervisor()
+        sup.tick()
+        self.assertEqual(sup.bots["demo"].state, "running")
+        host.apply_control(self.paths, "demo", "stop")
+        self.assertEqual((d / ".disabled").read_text(encoding="utf-8"), "stopped by host.py stop\n")
+        sup.tick()
+        self.assertEqual(sup.bots["demo"].state, "disabled")
+        self.assertIsNone(sup.bots["demo"].proc)
+        host.apply_control(self.paths, "demo", "start")
+        self.assertFalse((d / ".disabled").exists())
+        sup.tick()
+        self.assertEqual(sup.bots["demo"].state, "running")
+        old = sup.bots["demo"].proc.pid
+        host.apply_control(self.paths, "demo", "restart")
+        self.assertTrue((d / ".restart").exists())
+        sup.tick()
+        self.assertFalse((d / ".restart").exists())
+        self.assertIsNotNone(sup.bots["demo"].proc)
+        self.assertNotEqual(sup.bots["demo"].proc.pid, old)
+        self.assertEqual(sup.bots["demo"].state, "running")
+        with self.assertRaises(SystemExit):
+            host.apply_control(self.paths, "../evil", "stop")
+        self.assertFalse((self.root / ".disabled").exists())
+
+    def test_dashboard_bind_defaults_to_loopback(self):
+        args = host.build_parser().parse_args(["dashboard"])
+        self.assertEqual(args.host, "127.0.0.1")
+        self.assertEqual(args.port, 8765)
+        self.assertIsNone(host.check_dashboard_bind("127.0.0.1", 8765))
+        self.assertIsNone(host.check_dashboard_bind("localhost", 8765))
+        self.assertIsNone(host.check_dashboard_bind("::1", 8765))
+        for host_name in ("0.0.0.0", "192.168.1.50"):
+            warn = host.check_dashboard_bind(host_name, 8765)
+            self.assertIn("WARNING", warn)
+            self.assertIn("127.0.0.1", warn)
+        for port in (53, 80, 3000, 5055, 0, 70000):
+            with self.assertRaises(SystemExit):
+                host.check_dashboard_bind("127.0.0.1", port)
+        self.assertFalse(host.dashboard_origin_allowed(
+            "http://127.0.0.1:9/", "127.0.0.1:8765", "127.0.0.1", 8765))
+        self.assertFalse(host.dashboard_origin_allowed(
+            "http://evil.example/", "127.0.0.1:8765", "127.0.0.1", 8765))
+        self.assertTrue(host.dashboard_origin_allowed(
+            "http://localhost:8765/", "localhost:8765", "127.0.0.1", 8765))
+        self.assertFalse(host.dashboard_request_allowed(
+            {"Origin": "http://127.0.0.1:9/", "Host": "127.0.0.1:8765"}, self.token, self.token,
+            "127.0.0.1", 8765))
+        self.assertFalse(host.dashboard_request_allowed({}, "nope", self.token, "127.0.0.1", 8765))
+        try:
+            ipv6 = host.serve_dashboard(self.paths, "::1", 0, token="t" * 16)
+        except OSError:
+            ipv6 = None
+        if ipv6 is not None:
+            try:
+                self.assertEqual(ipv6.address_family, socket.AF_INET6)
+                self.assertIn("::1", ipv6.server_address[0])
+            finally:
+                ipv6.server_close()
+
+    def test_http_actions_require_token_and_same_origin(self):
+        d = self.client("demo")
+        (d / ".env").write_text(
+            f"DISCORD_TOKEN={ENV_SENTINEL}\nPLAIN_MARKER_do_not_show came from dotenv\n",
+            encoding="utf-8")
+        (d / "logs" / "bot.log").write_text("\n".join([
+            "LINE_ONE_UNIQUE",
+            "online as DemoBot",
+            "token-in-env: False",
+            f"saw {TOKEN}",
+            f"DEEPL_API_KEY={DEEPL_SENTINEL}",
+            "<script>alert(1)</script>",
+        ]) + "\n", encoding="utf-8")
+        self.client("partial", env=False)
+        self.start_dash()
+        status, headers, body = self.request("GET", "/?n=4")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers["content-type"])
+        self.assertIn("default-src 'none'", headers["content-security-policy"])
+        self.assertEqual(headers["x-frame-options"], "DENY")
+        self.assertIn("token-in-env: False", body)
+        self.assertIn("[redacted]", body)
+        self.assertNotIn("LINE_ONE_UNIQUE", body)
+        self.assertNotIn(TOKEN, body)
+        self.assertNotIn(DEEPL_SENTINEL, body)
+        self.assertNotIn(ENV_SENTINEL, body)
+        self.assertNotIn("PLAIN_MARKER_do_not_show", body)
+        self.assertNotIn("<script>", body)
+        self.assertIn("&lt;script&gt;", body)
+        self.assertIn("not running", body.lower())
+        self.assertIn(self.token, body)
+
+        status, _, _ = self.post_control("demo", "stop")
+        self.assertEqual(status, 403)
+        self.assertFalse((d / ".disabled").exists())
+        status, _, _ = self.post_control("demo", "stop", csrf="wrong-token")
+        self.assertEqual(status, 403)
+        self.assertFalse((d / ".disabled").exists())
+        status, _, _ = self.post_control(
+            "demo", "stop", csrf=self.token, extra_headers={"Origin": "http://127.0.0.1:9/"})
+        self.assertEqual(status, 403)
+        self.assertFalse((d / ".disabled").exists())
+        status, _, _ = self.post_control(
+            "demo", "stop", csrf=self.token,
+            extra_headers={"Referer": "http://evil.example/steal"})
+        self.assertEqual(status, 403)
+        self.assertFalse((d / ".disabled").exists())
+
+        status, headers, _ = self.post_control(
+            "demo", "stop", csrf=self.token,
+            extra_headers={"Origin": f"http://127.0.0.1:{self.port}/"})
+        self.assertEqual(status, 303)
+        self.assertEqual(headers.get("location"), "/")
+        self.assertEqual((d / ".disabled").read_text(encoding="utf-8"), "stopped by host.py stop\n")
+        _, _, body = self.request("GET", "/")
+        self.assertIn('data-client="demo" data-state="disabled"', body)
+        self.assertIn(">stopped<", body)
+        self.assertNotIn(ENV_SENTINEL, body)
+        self.assertNotIn("PLAIN_MARKER_do_not_show", body)
+
+        status, _, _ = self.post_control("demo", "start", csrf=self.token)
+        self.assertEqual(status, 303)
+        self.assertFalse((d / ".disabled").exists())
+        status, _, _ = self.post_control("demo", "restart", csrf=self.token)
+        self.assertEqual(status, 303)
+        self.assertTrue((d / ".restart").read_text(encoding="utf-8").startswith("1"))
+        self.assertFalse((d / ".disabled").exists())
+
+        status, _, body = self.post_control("partial", "start", csrf=self.token)
+        self.assertEqual(status, 400)
+        self.assertIn("config.json", body)
+        self.assertNotIn(ENV_SENTINEL, body)
+        status, _, body = self.post_control("../evil", "stop", csrf=self.token)
+        self.assertEqual(status, 400)
+        self.assertFalse((self.root / ".disabled").exists())
+        status, _, body = self.request(
+            "GET", f"/control?name=demo&action=stop&csrf={self.token}")
+        self.assertEqual(status, 404)
+        self.assertFalse((d / ".disabled").exists())
+        status, _, body = self.request("GET", "/clients/demo/.env")
+        self.assertEqual(status, 404)
+        self.assertNotIn(ENV_SENTINEL, body)
+        self.assertNotIn("PLAIN_MARKER_do_not_show", body)
 
 
 if __name__ == "__main__":
