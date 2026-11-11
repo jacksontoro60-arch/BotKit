@@ -1,7 +1,8 @@
 {
   "guild_id": "YOUR_SERVER_ID",
-  "features": ["scheduler", "mcstatus_alert", "modflag", "purge_mine", "translate", "verify"],
+  "features": ["scheduler", "mcstatus_alert", "modflag", "purge_mine", "translate", "verify", "tickets", "welcome", "server_logs", "rolemenu"],
   "message_content_intent": true,
+  "members_intent": true,
   "scheduler": {
     "timezone": "America/New_York",
     "posts": [
@@ -23,5 +24,28 @@
     "captcha": true,
     "title": "Verification",
     "text": "Click **Verify** to get access to the server."
+  },
+  "tickets": {
+    "staff_role_id": "STAFF_ROLE_ID",
+    "mode": "thread",
+    "channel_id": "CHANNEL_ID",
+    "title": "Support",
+    "text": "Click **Open a ticket** or use `/ticket` to talk privately with staff."
+  },
+  "welcome": {
+    "channel_id": "CHANNEL_ID",
+    "message": "Welcome {member} to **{server}**! You are member #{count}."
+  },
+  "server_logs": {
+    "channel_id": "LOG_CHANNEL_ID",
+    "events": ["join", "leave", "delete", "edit", "roles"]
+  },
+  "rolemenu": {
+    "style": "buttons",
+    "title": "Roles",
+    "text": "Pick the roles you want. Buttons toggle a role. A select menu keeps only the roles you select.",
+    "roles": [
+      {"role_id": "ROLE_ID", "label": "Announcements", "emoji": "📢"}
+    ]
   }
 }

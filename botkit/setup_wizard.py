@@ -19,8 +19,15 @@ Non-interactive answers file (every key is optional except the ones the chosen f
   "verify": {"role": "Verified" | "123..." | 2 | "create", "log_channel": "mods" | null,
              "captcha": true, "title": "...", "text": "..."},
   "translate": {"backend": "libretranslate", "libretranslate_url": "http://127.0.0.1:5000/translate",
-                "default_target": "en", "channels": {"general": "en"}, "check_url": false}
+                "default_target": "en", "channels": {"general": "en"}, "check_url": false},
+  "tickets": {"staff_role": "Staff", "mode": "thread", "channel": "support",
+              "title": "Support", "text": "..."},
+  "welcome": {"channel": "welcome", "message": "Welcome {member} to {server}!"},
+  "server_logs": {"channel": "mods", "events": ["join", "leave", "delete", "edit", "roles"]},
+  "rolemenu": {"style": "buttons", "title": "Roles", "text": "...",
+               "roles": [{"role": "Member", "label": "Member", "emoji": "✅"}]}
 }
+Tickets mode "channel" uses "category" instead of "channel". Role-menu style may be "select".
 Channels and roles can be given as an ID, a name, or a 1-based number from the wizard's list.
 """
 import argparse
@@ -34,10 +41,23 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from cogs.rolemenu import (
+    DEFAULT_TEXT as ROLEMENU_TEXT,
+    DEFAULT_TITLE as ROLEMENU_TITLE,
+    MAX_ROLES,
+    normalize_style,
+)
+from cogs.server_logs import normalize_events
+from cogs.tickets import DEFAULT_TEXT as TICKET_TEXT, DEFAULT_TITLE as TICKET_TITLE, normalize_mode
+from cogs.welcome import DEFAULT_MESSAGE as WELCOME_MESSAGE
+
 ROOT = Path(__file__).parent
 API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://github.com/botkit, 1.0) BotKitSetupWizard"
-FEATURES = ["scheduler", "mcstatus_alert", "modflag", "purge_mine", "verify", "translate"]
+FEATURES = [
+    "scheduler", "mcstatus_alert", "modflag", "purge_mine", "verify", "translate",
+    "tickets", "welcome", "server_logs", "rolemenu",
+]
 FEATURE_HELP = {
     "scheduler": "scheduled announcement posts",
     "mcstatus_alert": "Minecraft server online/offline alerts",
@@ -45,9 +65,17 @@ FEATURE_HELP = {
     "purge_mine": "/purge_mine: members delete their own messages",
     "verify": "Verify button that grants a role",
     "translate": "auto-translate channels + right-click Translate",
+    "tickets": "support tickets (button or /ticket) for staff",
+    "welcome": "welcome message when a member joins",
+    "server_logs": "log joins, leaves, edits, deletes, and role changes",
+    "rolemenu": "self-assign roles from a button or select menu",
 }
-# View Channel, Send Messages, Manage Messages, Embed Links, Read Message History, Manage Roles
-INVITE_PERMISSIONS = 268528640
+# View Channel, Send Messages, Manage Messages, Embed Links, Read Message History, Manage Roles,
+# Manage Channels, View Audit Log, Manage Threads, Create Private Threads, Send Messages in Threads.
+INVITE_PERMISSIONS = (
+    (1 << 4) + (1 << 7) + (1 << 10) + (1 << 11) + (1 << 13) + (1 << 14) + (1 << 16) + (1 << 28)
+    + (1 << 34) + (1 << 36) + (1 << 38)
+)
 TEXT_CHANNEL_TYPES = {0, 5}  # text, announcement
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
@@ -128,6 +156,38 @@ class DiscordAPI:
 def text_channels(channels):
     chans = [c for c in channels if c.get("type") in TEXT_CHANNEL_TYPES]
     return sorted(chans, key=lambda c: (c.get("position", 0), c.get("name", "")))
+
+
+def categories(channels):
+    cats = [c for c in channels if c.get("type") == 4]
+    return sorted(cats, key=lambda c: (c.get("position", 0), c.get("name", "")))
+
+
+def _guard(fn, value):
+    try:
+        return fn(value)
+    except ValueError as e:
+        raise WizardError(str(e)) from None
+
+
+def parse_log_events(value):
+    return _guard(normalize_events, value)
+
+
+def parse_ticket_mode(value):
+    return _guard(normalize_mode, value)
+
+
+def parse_role_style(value):
+    return _guard(normalize_style, value)
+
+
+def role_entry(role, label, emoji):
+    text = str(label).strip() if label else ""
+    entry = {"role_id": str(role["id"]), "label": (text or role["name"])[:80]}
+    if emoji not in (None, "") and str(emoji).strip():
+        entry["emoji"] = str(emoji).strip()[:64]
+    return entry
 
 
 def assignable_roles(roles, guild_id):
@@ -381,7 +441,9 @@ def build(src, api_factory=DiscordAPI, out=print, allow_create_role=True, url_ch
         raise WizardError("bot is not in any server")
     guild = src.pick("guild", "Which server is this config for?", guilds, lambda g: f"{g['name']}  ({g['id']})")
     gid = str(guild["id"])
-    chans = text_channels(api.channels(gid))
+    raw_channels = api.channels(gid)
+    chans = text_channels(raw_channels)
+    cats = categories(raw_channels)
     if not chans:
         raise WizardError("the bot can't see any text channels in that server")
     roles = assignable_roles(api.roles(gid), gid)
@@ -391,7 +453,7 @@ def build(src, api_factory=DiscordAPI, out=print, allow_create_role=True, url_ch
         return str(c["id"]) if c else None
 
     features = src.features()
-    cfg = {"guild_id": gid, "features": features, "message_content_intent": False}
+    cfg = {"guild_id": gid, "features": features, "message_content_intent": False, "members_intent": False}
 
     if "scheduler" in features:
         tz = src.retry(valid_timezone, src.ask("scheduler.timezone", "Scheduler time zone (IANA)", "America/New_York"))
@@ -471,6 +533,66 @@ def build(src, api_factory=DiscordAPI, out=print, allow_create_role=True, url_ch
         cfg["translate"] = t
         cfg["message_content_intent"] = bool(t["channels"])
 
+    if "tickets" in features:
+        role = src.pick("tickets.staff_role", "Staff role that can see and close tickets?", roles, role_label)
+        mode = src.retry(parse_ticket_mode, src.ask(
+            "tickets.mode", "Tickets as a private thread or a private channel? (thread/channel)", "thread"))
+        tcfg = {"staff_role_id": str(role["id"]), "mode": mode}
+        if mode == "thread":
+            tcfg["channel_id"] = pick_channel("tickets.channel", "Channel for the ticket panel and private threads?")
+        else:
+            if not cats:
+                raise WizardError("channel-mode tickets need a category the bot can see. Create one, or use thread mode.")
+            cat = src.pick("tickets.category", "Category for private ticket channels?", cats,
+                           lambda c: f"{c['name']}  ({c['id']})")
+            tcfg["category_id"] = str(cat["id"])
+        tcfg["title"] = src.ask("tickets.title", "Panel title", TICKET_TITLE)
+        tcfg["text"] = src.ask("tickets.text", "Panel text", TICKET_TEXT)
+        cfg["tickets"] = tcfg
+
+    if "welcome" in features:
+        cfg["welcome"] = {
+            "channel_id": pick_channel("welcome.channel", "Channel for welcome messages?"),
+            "message": src.ask("welcome.message", "Welcome message ({member}, {name}, {server}, {count})", WELCOME_MESSAGE),
+        }
+
+    if "server_logs" in features:
+        cfg["server_logs"] = {
+            "channel_id": pick_channel("server_logs.channel", "Channel for server logs?"),
+            "events": src.retry(parse_log_events, src.ask(
+                "server_logs.events", "Log which events? (join,leave,delete,edit,roles or all)", "all")),
+        }
+
+    if "rolemenu" in features:
+        style = src.retry(parse_role_style, src.ask("rolemenu.style", "Role menu style (buttons/select)", "buttons"))
+        title = src.ask("rolemenu.title", "Menu title", ROLEMENU_TITLE)
+        text = src.ask("rolemenu.text", "Menu text", ROLEMENU_TEXT)
+        built = []
+        if isinstance(src, FromAnswers):
+            preset = src.ask("rolemenu.roles", "", None)
+            if not preset:
+                raise WizardError("rolemenu needs at least one role")
+            for i, item in enumerate(preset):
+                if not isinstance(item, dict):
+                    raise WizardError(f"rolemenu.roles[{i}] must be an object")
+                picked = match_item(roles, item.get("role", item.get("role_id")), f"rolemenu.roles[{i}].role")
+                built.append(role_entry(picked, item.get("label"), item.get("emoji")))
+        else:
+            while True:
+                picked = src.pick(None, "Role to put on the menu?", roles, role_label)
+                label = src.ask(None, "Button or option label", picked["name"])
+                emoji = src.ask(None, "Emoji (optional)", "")
+                built.append(role_entry(picked, label, emoji))
+                if len(built) >= MAX_ROLES or not src.yes("Add another role?", False):
+                    break
+        if len(built) > MAX_ROLES:
+            raise WizardError(f"rolemenu supports at most {MAX_ROLES} roles")
+        if len({entry["role_id"] for entry in built}) != len(built):
+            raise WizardError("rolemenu lists the same role twice")
+        cfg["rolemenu"] = {"style": style, "title": title, "text": text, "roles": built}
+
+    cfg["members_intent"] = "welcome" in features or "server_logs" in features
+
     info = {"bot": me["username"], "bot_id": str(me["id"]), "client_id": client_id, "invite_url": url,
             "guild_name": guild["name"], "channels_seen": len(chans), "roles_seen": len(roles)}
     return cfg, token, info
@@ -532,8 +654,17 @@ def main(argv=None, api_factory=DiscordAPI, url_checker=check_translate_url):
     print(f"\nInvite / re-authorize URL (scopes bot + applications.commands):\n  {info['invite_url']}")
     if cfg.get("message_content_intent"):
         print("\nReminder: enable the Message Content intent in Developer Portal > Bot for auto-translate.")
-    if "verify" in cfg["features"]:
-        print("Reminder: the bot's role must be ABOVE the verified role (Server Settings > Roles).")
+    if cfg.get("members_intent"):
+        print("Reminder: enable the Server Members intent in Developer Portal > Bot "
+              "(welcome messages and server logs).")
+    if "tickets" in cfg["features"]:
+        if cfg["tickets"]["mode"] == "thread":
+            print("Reminder: thread tickets need Create Private Threads, Send Messages in Threads, and "
+                  "Manage Threads. Staff see private threads only if they have Manage Threads on that channel.")
+        else:
+            print("Reminder: channel tickets need Manage Channels. The staff role is added to each ticket channel.")
+    if "verify" in cfg["features"] or "rolemenu" in cfg["features"]:
+        print("Reminder: the bot's role must be ABOVE any role it assigns (Server Settings > Roles).")
     print("\nStart the bot with:  python bot.py")
     return 0
 

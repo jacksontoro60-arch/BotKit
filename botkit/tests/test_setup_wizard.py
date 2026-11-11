@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import discord
 import setup_wizard as sw
 
 FAKE_TOKEN = "MTAx.fake.tokenvalue"
@@ -62,6 +63,10 @@ FULL_ANSWERS = {
     "verify": {"role": "Verified", "captcha": False},
     "translate": {"libretranslate_url": "http://127.0.0.1:5000/translate", "channels": {"general": "EN"},
                   "check_url": True},
+    "tickets": {"staff_role": "Verified", "mode": "thread", "channel": "general"},
+    "welcome": {"channel": "news", "message": "Welcome {member}"},
+    "server_logs": {"channel": "mods", "events": ["join", "leave", "delete", "edit", "roles"]},
+    "rolemenu": {"style": "buttons", "roles": [{"role": "Member", "label": "Member", "emoji": "✅"}]},
 }
 
 
@@ -75,13 +80,22 @@ def build(answers, **kw):
 class Helpers(unittest.TestCase):
     def test_filters(self):
         self.assertEqual([c["name"] for c in sw.text_channels(CHANNELS)], ["general", "news", "mods"])
+        self.assertEqual([c["name"] for c in sw.categories(CHANNELS)], ["Category"])
         self.assertEqual([r["name"] for r in sw.assignable_roles(ROLES, GID)], ["Verified", "Member"])
 
     def test_invite_url(self):
         u = sw.invite_url("555")
         self.assertIn("client_id=555", u)
         self.assertIn("scope=bot+applications.commands", u)
-        self.assertIn("permissions=268528640", u)
+        self.assertEqual(sw.INVITE_PERMISSIONS, 361045781648)
+        self.assertIn(f"permissions={sw.INVITE_PERMISSIONS}", u)
+        perms = discord.Permissions(sw.INVITE_PERMISSIONS)
+        for name in ("view_channel", "send_messages", "manage_messages", "embed_links",
+                     "read_message_history", "manage_roles", "manage_channels", "view_audit_log",
+                     "manage_threads", "create_private_threads", "send_messages_in_threads"):
+            self.assertTrue(getattr(perms, name), name)
+        self.assertFalse(perms.administrator)
+        self.assertFalse(perms.mention_everyone)
 
     def test_days_time_tz_features(self):
         self.assertEqual(sw.parse_days("weekdays"), ["mon", "tue", "wed", "thu", "fri"])
@@ -93,7 +107,7 @@ class Helpers(unittest.TestCase):
         self.assertEqual(sw.valid_timezone("America/New_York"), "America/New_York")
         with self.assertRaises(sw.WizardError): sw.valid_timezone("Mars/Base")
         self.assertEqual(sw.parse_features("1, translate"), ["scheduler", "translate"])
-        self.assertEqual(len(sw.parse_features("all")), 6)
+        self.assertEqual(len(sw.parse_features("all")), 10)
         with self.assertRaises(sw.WizardError): sw.parse_features("nope")
 
     def test_match_item(self):
@@ -179,19 +193,39 @@ class BuildNonInteractive(unittest.TestCase):
         self.assertEqual(cfg["translate"]["channels"], {"11": "en"})
         self.assertEqual(cfg["translate"]["libretranslate_url"], "http://127.0.0.1:5000/translate")
         self.assertTrue(cfg["message_content_intent"])
+        self.assertEqual(cfg["tickets"]["staff_role_id"], "23")
+        self.assertEqual(cfg["tickets"]["mode"], "thread")
+        self.assertEqual(cfg["tickets"]["channel_id"], "11")
+        self.assertEqual(cfg["tickets"]["title"], sw.TICKET_TITLE)
+        self.assertNotIn("category_id", cfg["tickets"])
+        self.assertEqual(cfg["welcome"], {"channel_id": "14", "message": "Welcome {member}"})
+        self.assertEqual(cfg["server_logs"]["channel_id"], "12")
+        self.assertEqual(cfg["server_logs"]["events"], ["join", "leave", "delete", "edit", "roles"])
+        self.assertEqual(cfg["rolemenu"]["style"], "buttons")
+        self.assertEqual(cfg["rolemenu"]["roles"], [{"role_id": "21", "label": "Member", "emoji": "✅"}])
+        self.assertTrue(cfg["members_intent"])
         self.assertEqual(info["client_id"], "555")
-        self.assertIn("permissions=268528640", info["invite_url"])
+        self.assertIn(f"permissions={sw.INVITE_PERMISSIONS}", info["invite_url"])
         self.assertFalse(any(FAKE_TOKEN in line for line in out))
         self.assertNotIn(("create_role", GID, "Verified"), FakeAPI.instances[0].calls)
 
     def test_config_loads_in_bot_cogs(self):
         """The generated translate/verify sections are accepted by the real cogs."""
         from types import SimpleNamespace
-        from cogs import translate as tr, verify as vf
+        from cogs import rolemenu, server_logs, tickets, translate as tr, verify as vf, welcome
         cfg, *_ = build(FULL_ANSWERS)
         bot = SimpleNamespace(config=cfg, tree=MagicMock(), get_channel=MagicMock(), add_view=MagicMock())
         self.assertEqual(tr.Translate(bot).backend.url, "http://127.0.0.1:5000/translate")
         self.assertEqual(vf.Verify(bot).role_id, 23)
+        self.assertEqual(tickets.Tickets(bot).staff_role_id, 23)
+        self.assertEqual(tickets.Tickets(bot).channel_id, 11)
+        self.assertEqual(welcome.Welcome(bot).channel_id, 14)
+        self.assertEqual(welcome.Welcome(bot).message, "Welcome {member}")
+        self.assertEqual(server_logs.ServerLogs(bot).channel_id, 12)
+        self.assertEqual(server_logs.ServerLogs(bot).events, {"join", "leave", "delete", "edit", "roles"})
+        menu = rolemenu.RoleMenu(bot)
+        self.assertEqual(menu.style, "buttons")
+        self.assertEqual(menu.roles[0]["role_id"], 21)
 
     def test_create_role(self):
         a = dict(FULL_ANSWERS, features=["verify"], verify={"role": "create"})
@@ -203,7 +237,8 @@ class BuildNonInteractive(unittest.TestCase):
 
     def test_minimal_features_and_guild_by_number(self):
         cfg, *_ = build({"token": FAKE_TOKEN, "guild": 2, "features": ["purge_mine"]})
-        self.assertEqual(cfg, {"guild_id": "2", "features": ["purge_mine"], "message_content_intent": False})
+        self.assertEqual(cfg, {"guild_id": "2", "features": ["purge_mine"],
+                               "message_content_intent": False, "members_intent": False})
 
     def test_errors(self):
         with self.assertRaises(sw.WizardError):
@@ -253,6 +288,95 @@ class BuildInteractive(unittest.TestCase):
         self.assertTrue(any("#general" in str(p) for p in printed))
 
 
+class NewFeatureAnswers(unittest.TestCase):
+    def setUp(self):
+        FakeAPI.instances.clear()
+
+    def test_original_features_leave_members_intent_off(self):
+        answers = {k: v for k, v in FULL_ANSWERS.items() if k not in ("tickets", "welcome", "server_logs", "rolemenu")}
+        answers["features"] = ["scheduler", "mcstatus_alert", "modflag", "purge_mine", "verify", "translate"]
+        cfg, *_ = build(answers)
+        self.assertEqual(cfg["features"], answers["features"])
+        self.assertFalse(cfg["members_intent"])
+        self.assertTrue(cfg["message_content_intent"])
+        for key in ("tickets", "welcome", "server_logs", "rolemenu"):
+            self.assertNotIn(key, cfg)
+
+    def test_channel_tickets_select_menu_and_log_subset(self):
+        cfg, *_ = build({
+            "token": FAKE_TOKEN,
+            "guild": "Demo",
+            "features": ["tickets", "server_logs", "rolemenu"],
+            "tickets": {"staff_role": "Member", "mode": "channel", "category": "Category"},
+            "server_logs": {"channel": 3, "events": "join,leave"},
+            "rolemenu": {"style": "select", "roles": [{"role": "21", "label": "People"}]},
+        })
+        self.assertEqual(cfg["tickets"]["mode"], "channel")
+        self.assertEqual(cfg["tickets"]["category_id"], "15")
+        self.assertEqual(cfg["tickets"]["staff_role_id"], "21")
+        self.assertNotIn("channel_id", cfg["tickets"])
+        self.assertEqual(cfg["server_logs"]["channel_id"], "12")
+        self.assertEqual(cfg["server_logs"]["events"], ["join", "leave"])
+        self.assertEqual(cfg["rolemenu"]["style"], "select")
+        self.assertEqual(cfg["rolemenu"]["roles"], [{"role_id": "21", "label": "People"}])
+        self.assertTrue(cfg["members_intent"])
+        self.assertFalse(cfg["message_content_intent"])
+
+    def test_new_feature_errors(self):
+        base = {"token": FAKE_TOKEN, "guild": "Demo"}
+        with self.assertRaises(sw.WizardError):
+            build({**base, "features": ["tickets"], "tickets": {"staff_role": "Verified", "mode": "voice", "channel": "general"}})
+        with self.assertRaises(sw.WizardError):
+            build({**base, "features": ["server_logs"], "server_logs": {"channel": "mods", "events": "join,nope"}})
+        with self.assertRaises(sw.WizardError):
+            build({**base, "features": ["rolemenu"], "rolemenu": {}})
+        with self.assertRaises(sw.WizardError):
+            build({**base, "features": ["rolemenu"], "rolemenu": {"roles": [{"role": "Member", "label": "A"}] * 26}})
+        with self.assertRaises(sw.WizardError):
+            build({**base, "features": ["rolemenu"], "rolemenu": {"roles": [
+                {"role": "Member", "label": "A"}, {"role": "Member", "label": "B"}]}})
+
+
+class BuildInteractiveNewFeatures(unittest.TestCase):
+    def test_interactive_server_features(self):
+        answers = iter([
+            "1",                 # guild -> Demo
+            "7,8,9,10",          # tickets, welcome, server_logs, rolemenu
+            "1",                 # staff role -> Verified
+            "thread",
+            "2",                 # parent channel -> #news
+            "", "",              # title, text defaults
+            "1",                 # welcome channel -> #general
+            "Hello {member}",
+            "3",                 # log channel -> #mods
+            "join, leave",
+            "select",
+            "", "",              # menu title, text
+            "2",                 # role -> Member
+            "Updates",
+            "🔔",
+            "n",
+        ])
+        printed = []
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DISCORD_TOKEN", None)
+            src = sw.Interactive(inp=lambda p: next(answers), secret=lambda p: FAKE_TOKEN, out=printed.append)
+            FakeAPI.instances.clear()
+            cfg, token, info = sw.build(src, api_factory=FakeAPI, out=printed.append)
+        self.assertEqual(token, FAKE_TOKEN)
+        self.assertEqual(cfg["features"], ["tickets", "welcome", "server_logs", "rolemenu"])
+        self.assertEqual(cfg["tickets"]["channel_id"], "14")
+        self.assertEqual(cfg["tickets"]["staff_role_id"], "23")
+        self.assertEqual(cfg["welcome"]["message"], "Hello {member}")
+        self.assertEqual(cfg["server_logs"]["events"], ["join", "leave"])
+        self.assertEqual(cfg["server_logs"]["channel_id"], "12")
+        self.assertEqual(cfg["rolemenu"]["style"], "select")
+        self.assertEqual(cfg["rolemenu"]["roles"], [{"role_id": "21", "label": "Updates", "emoji": "🔔"}])
+        self.assertTrue(cfg["members_intent"])
+        self.assertFalse(cfg["message_content_intent"])
+        self.assertFalse(any(FAKE_TOKEN in str(p) for p in printed))
+
+
 class MainWrites(unittest.TestCase):
     def test_main_writes_config_and_env_only_token_in_env(self):
         with tempfile.TemporaryDirectory() as d:
@@ -274,7 +398,8 @@ class MainWrites(unittest.TestCase):
             self.assertNotIn("=old", env)
             self.assertNotIn(FAKE_TOKEN, (d / "config.json").read_text())
             self.assertNotIn(FAKE_TOKEN, buf.getvalue())
-            self.assertIn("permissions=268528640", buf.getvalue())
+            self.assertIn(f"permissions={sw.INVITE_PERMISSIONS}", buf.getvalue())
+            self.assertIn("Server Members", buf.getvalue())
             if os.name == "posix":
                 self.assertEqual(os.stat(d / ".env").st_mode & 0o777, 0o600)
 
