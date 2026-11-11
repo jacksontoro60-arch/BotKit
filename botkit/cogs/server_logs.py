@@ -160,9 +160,15 @@ def role_names(member) -> str:
 class ServerLogs(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        cfg = bot.config.get("server_logs", {})
-        self.channel_id = int(cfg["channel_id"])
-        self.events = set(normalize_events(cfg.get("events", "all")))
+        self.apply_config()
+
+    def apply_config(self):
+        """Re-read log settings. Called at startup and after /settings set."""
+        cfg = self.bot.config.get("server_logs") or {}
+        channel_id = int(cfg["channel_id"])
+        events = set(normalize_events(cfg.get("events", "all")))
+        self.channel_id = channel_id
+        self.events = events
 
     def _guild(self, guild_id):
         getter = getattr(self.bot, "get_guild", None)

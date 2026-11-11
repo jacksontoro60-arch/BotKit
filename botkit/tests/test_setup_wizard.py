@@ -67,6 +67,7 @@ FULL_ANSWERS = {
     "welcome": {"channel": "news", "message": "Welcome {member}"},
     "server_logs": {"channel": "mods", "events": ["join", "leave", "delete", "edit", "roles"]},
     "rolemenu": {"style": "buttons", "roles": [{"role": "Member", "label": "Member", "emoji": "✅"}]},
+    "admin": {"staff_role": "Verified"},
 }
 
 
@@ -107,7 +108,8 @@ class Helpers(unittest.TestCase):
         self.assertEqual(sw.valid_timezone("America/New_York"), "America/New_York")
         with self.assertRaises(sw.WizardError): sw.valid_timezone("Mars/Base")
         self.assertEqual(sw.parse_features("1, translate"), ["scheduler", "translate"])
-        self.assertEqual(len(sw.parse_features("all")), 10)
+        self.assertEqual(len(sw.parse_features("all")), 11)
+        self.assertEqual(sw.parse_features("11"), ["admin"])
         with self.assertRaises(sw.WizardError): sw.parse_features("nope")
 
     def test_match_item(self):
@@ -203,6 +205,7 @@ class BuildNonInteractive(unittest.TestCase):
         self.assertEqual(cfg["server_logs"]["events"], ["join", "leave", "delete", "edit", "roles"])
         self.assertEqual(cfg["rolemenu"]["style"], "buttons")
         self.assertEqual(cfg["rolemenu"]["roles"], [{"role_id": "21", "label": "Member", "emoji": "✅"}])
+        self.assertEqual(cfg["admin"], {"staff_role_id": "23"})
         self.assertTrue(cfg["members_intent"])
         self.assertEqual(info["client_id"], "555")
         self.assertIn(f"permissions={sw.INVITE_PERMISSIONS}", info["invite_url"])
@@ -335,6 +338,8 @@ class NewFeatureAnswers(unittest.TestCase):
         with self.assertRaises(sw.WizardError):
             build({**base, "features": ["rolemenu"], "rolemenu": {"roles": [
                 {"role": "Member", "label": "A"}, {"role": "Member", "label": "B"}]}})
+        with self.assertRaises(sw.WizardError):
+            build({**base, "features": ["admin"]})
 
 
 class BuildInteractiveNewFeatures(unittest.TestCase):
@@ -373,6 +378,25 @@ class BuildInteractiveNewFeatures(unittest.TestCase):
         self.assertEqual(cfg["rolemenu"]["style"], "select")
         self.assertEqual(cfg["rolemenu"]["roles"], [{"role_id": "21", "label": "Updates", "emoji": "🔔"}])
         self.assertTrue(cfg["members_intent"])
+        self.assertFalse(cfg["message_content_intent"])
+        self.assertFalse(any(FAKE_TOKEN in str(p) for p in printed))
+
+    def test_interactive_admin_feature(self):
+        answers = iter([
+            "1",   # guild -> Demo
+            "11",  # admin
+            "1",   # staff role -> Verified (higher position)
+        ])
+        printed = []
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DISCORD_TOKEN", None)
+            src = sw.Interactive(inp=lambda p: next(answers), secret=lambda p: FAKE_TOKEN, out=printed.append)
+            FakeAPI.instances.clear()
+            cfg, token, _info = sw.build(src, api_factory=FakeAPI, out=printed.append)
+        self.assertEqual(token, FAKE_TOKEN)
+        self.assertEqual(cfg["features"], ["admin"])
+        self.assertEqual(cfg["admin"], {"staff_role_id": "23"})
+        self.assertFalse(cfg["members_intent"])
         self.assertFalse(cfg["message_content_intent"])
         self.assertFalse(any(FAKE_TOKEN in str(p) for p in printed))
 

@@ -25,9 +25,11 @@ Non-interactive answers file (every key is optional except the ones the chosen f
   "welcome": {"channel": "welcome", "message": "Welcome {member} to {server}!"},
   "server_logs": {"channel": "mods", "events": ["join", "leave", "delete", "edit", "roles"]},
   "rolemenu": {"style": "buttons", "title": "Roles", "text": "...",
-               "roles": [{"role": "Member", "label": "Member", "emoji": "✅"}]}
+               "roles": [{"role": "Member", "label": "Member", "emoji": "✅"}]},
+  "admin": {"staff_role": "Staff"}
 }
 Tickets mode "channel" uses "category" instead of "channel". Role-menu style may be "select".
+The admin feature adds /settings for that staff role. It never reads or writes the bot token.
 Channels and roles can be given as an ID, a name, or a 1-based number from the wizard's list.
 """
 import argparse
@@ -56,7 +58,7 @@ API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://github.com/botkit, 1.0) BotKitSetupWizard"
 FEATURES = [
     "scheduler", "mcstatus_alert", "modflag", "purge_mine", "verify", "translate",
-    "tickets", "welcome", "server_logs", "rolemenu",
+    "tickets", "welcome", "server_logs", "rolemenu", "admin",
 ]
 FEATURE_HELP = {
     "scheduler": "scheduled announcement posts",
@@ -69,6 +71,7 @@ FEATURE_HELP = {
     "welcome": "welcome message when a member joins",
     "server_logs": "log joins, leaves, edits, deletes, and role changes",
     "rolemenu": "self-assign roles from a button or select menu",
+    "admin": "staff can view and change routine settings with /settings",
 }
 # View Channel, Send Messages, Manage Messages, Embed Links, Read Message History, Manage Roles,
 # Manage Channels, View Audit Log, Manage Threads, Create Private Threads, Send Messages in Threads.
@@ -591,6 +594,12 @@ def build(src, api_factory=DiscordAPI, out=print, allow_create_role=True, url_ch
             raise WizardError("rolemenu lists the same role twice")
         cfg["rolemenu"] = {"style": style, "title": title, "text": text, "roles": built}
 
+    if "admin" in features:
+        role = src.pick("admin.staff_role",
+                        "Staff role that can change bot settings from Discord? (admins always can)",
+                        roles, role_label)
+        cfg["admin"] = {"staff_role_id": str(role["id"])}
+
     cfg["members_intent"] = "welcome" in features or "server_logs" in features
 
     info = {"bot": me["username"], "bot_id": str(me["id"]), "client_id": client_id, "invite_url": url,
@@ -665,6 +674,10 @@ def main(argv=None, api_factory=DiscordAPI, url_checker=check_translate_url):
             print("Reminder: channel tickets need Manage Channels. The staff role is added to each ticket channel.")
     if "verify" in cfg["features"] or "rolemenu" in cfg["features"]:
         print("Reminder: the bot's role must be ABOVE any role it assigns (Server Settings > Roles).")
+    if "admin" in cfg["features"]:
+        print("Reminder: /settings lets that staff role, administrators, and members who can manage "
+              "channels or threads view and change routine settings. The bot token and .env cannot be "
+              "read or changed there. Turning features or intents on or off still needs a restart.")
     print("\nStart the bot with:  python bot.py")
     return 0
 

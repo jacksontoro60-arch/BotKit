@@ -25,6 +25,7 @@ A modular Python Discord bot (discord.py 2.x). One codebase, and each server get
 | `welcome` | Posts a configurable message when a member joins | automatic |
 | `server_logs` | Posts joins, leaves, message deletes, message edits, and role changes to a log channel | automatic |
 | `rolemenu` | Members add or remove allowed roles from a button row or select menu. The menu keeps working after restarts | `/rolemenu_setup` (admins) |
+| `admin` | Staff view and change routine settings from Discord. Changes are saved and applied live when that is safe. The bot token and `.env` are not readable or writable | `/settings show`, `/settings set` (staff) |
 
 ## Quick setup: the wizard (recommended)
 
@@ -39,7 +40,7 @@ The wizard builds `config.json` and `.env` for a new client:
 1. Asks for the bot token with hidden input and writes it **only** to `.env` (other `.env` lines such as `DEEPL_API_KEY` are kept). The token is never printed or written to `config.json`.
 2. Checks the token against Discord (`GET /users/@me`) and prints the invite URL (scopes `bot` + `applications.commands`, permissions `361045781648` = View Channels, Send Messages, Manage Messages, Embed Links, Read Message History, Manage Roles, Manage Channels, View Audit Log, Manage Threads, Create Private Threads, Send Messages in Threads).
 3. Lists the servers the bot is in, then that server's text channels and roles, so you pick by number.
-4. Asks which of the 10 features to enable and their settings: scheduler posts, Minecraft address, mod channel, verify role (pick one, or type `c` to create a `Verified` role through the API), ticket staff role and whether tickets are private threads or channels, welcome channel and message, log channel, role-menu roles, and the translate backend URL (it can test the URL for you).
+4. Asks which of the 11 features to enable and their settings: scheduler posts, Minecraft address, mod channel, verify role (pick one, or type `c` to create a `Verified` role through the API), ticket staff role and whether tickets are private threads or channels, welcome channel and message, log channel, role-menu roles, the translate backend URL (it can test the URL for you), and the staff role that can use `/settings`.
 5. Writes `config.json`. If one already exists, it is first copied to `config.json.bak`.
 
 The bot has to be invited to the server before you run the wizard. If it's in no servers yet, the wizard prints the invite URL and stops.
@@ -95,8 +96,17 @@ Run these from the `botkit/` directory (`requirements.txt`, `bot.py`, and `setup
 | `rolemenu.style` | `buttons` (each click toggles one role) or `select` (the selection is the set of menu roles the member keeps) |
 | `rolemenu.roles[]` | Up to 25 roles. Each has `role_id`, `label`, and an optional `emoji` |
 | `rolemenu.title` / `text` | Text of the role-menu embed |
+| `admin.staff_role_id` | Role that can use `/settings`, along with administrators and members who can manage channels or threads. If this is unset, the tickets staff role is used |
 
 Translation keys come only from the environment: `DEEPL_API_KEY` (Free keys ending in `:fx` automatically use the free endpoint) and `LIBRETRANSLATE_API_KEY`. The public libretranslate.com instance needs a paid API key. A self-hosted LibreTranslate server is free.
+
+## Changing settings in Discord
+
+Turn on `admin` (the wizard asks for the staff role) and restart once so the cog loads. After that, staff use `/settings show` and `/settings set` in the configured server. Each change is written to `config.json` and applied to the running bot.
+
+Live settings: welcome channel and message; log channel and events; ticket mode, staff role, channel, category, and panel text; role-menu style, text, and roles; verify role, captcha, log channel, and panel text; mod-flag channel; Minecraft address, channel, and poll interval; scheduler time zone and posts; translate backend, URL, languages, and character cap; and the `/settings` staff role.
+
+The Discord token, `.env`, and API keys cannot be viewed or changed from Discord. Which features are loaded, `guild_id`, and the two intent flags still need a config edit and a restart (intents also need the Developer Portal toggles). Run `/rolemenu_setup`, `/verify_setup`, or `/ticket_setup` again when you want an already-posted panel to show new text or new menu buttons. Clicks on the existing verify and ticket buttons use the saved role, channel, and captcha immediately.
 
 ## Free translation: self-hosted LibreTranslate
 
@@ -153,7 +163,7 @@ Supervisor (`host.py`), from the repository root:
 python -m unittest discover -s tests -v
 ```
 
-Kit (translate routing, the verify role path, tickets, welcome, server logs, role menus, and the setup wizard), from `botkit/`:
+Kit (translate routing, the verify role path, tickets, welcome, server logs, role menus, in-Discord settings, and the setup wizard), from `botkit/`:
 
 ```
 python -m unittest discover -s tests -v
@@ -168,6 +178,7 @@ GitHub Actions runs both on every push and pull request to `main` (Python 3.10 a
 - **No MC alerts:** the first check only records the state, so alerts fire on the next change. Test with `/mcstatus`.
 - **Tickets don't open:** thread mode needs Create Private Threads, Send Messages in Threads, and Manage Threads. Channel mode needs Manage Channels and a category id. Staff see private threads only with Manage Threads on the parent channel.
 - **Welcome or join/leave/role logs never fire:** turn on Server Members in the Developer Portal. `"members_intent"` must be true, or `welcome` / `server_logs` must be in `features` (the bot requests the intent either way).
+- **/settings says you can't use it:** the command only runs in the configured server, for the `admin` staff role (or the tickets staff role if that is unset), an administrator, or a member with Manage Channels or Manage Threads. The feature has to be in `features` and the bot restarted once before the command exists.
 - **Deleted or edited text says "content unavailable":** that is expected without Message Content. The log still records the event, and edits include a jump link. A "Deleted by" line needs View Audit Log; members who delete their own messages usually leave no audit entry.
 
 ## License

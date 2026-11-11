@@ -192,17 +192,29 @@ class RoleMenuView(discord.ui.View):
 class RoleMenu(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        cfg = bot.config.get("rolemenu", {})
-        self.style = normalize_style(cfg.get("style", "buttons"))
-        self.title = cfg.get("title") or DEFAULT_TITLE
-        self.text = cfg.get("text") or DEFAULT_TEXT
-        self.roles = normalize_roles(cfg.get("roles"))
-        self._allowed = {spec["role_id"] for spec in self.roles}
+        self.apply_config()
 
-    async def cog_load(self):
+    def apply_config(self):
+        """Re-read menu settings. Posted messages keep their old components until /rolemenu_setup."""
+        cfg = self.bot.config.get("rolemenu") or {}
+        style = normalize_style(cfg.get("style", "buttons"))
+        title = cfg.get("title") or DEFAULT_TITLE
+        text = cfg.get("text") or DEFAULT_TEXT
+        roles = normalize_roles(cfg.get("roles"))
+        self.style = style
+        self.title = title
+        self.text = text
+        self.roles = roles
+        self._allowed = {spec["role_id"] for spec in roles}
+
+    def refresh_persistent_view(self):
+        """Register custom_ids for the current roles so a newly posted menu works before restart."""
         view = RoleMenuView(self)
         if view.children and view.is_persistent():
             self.bot.add_view(view)
+
+    async def cog_load(self):
+        self.refresh_persistent_view()
 
     async def handle_button(self, interaction: discord.Interaction, role_id: int):
         if interaction.guild is None:

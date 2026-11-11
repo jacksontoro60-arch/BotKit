@@ -1,6 +1,6 @@
 {
   "guild_id": "YOUR_SERVER_ID",
-  "features": ["scheduler", "mcstatus_alert", "modflag", "purge_mine", "translate", "verify", "tickets", "welcome", "server_logs", "rolemenu"],
+  "features": ["scheduler", "mcstatus_alert", "modflag", "purge_mine", "translate", "verify", "tickets", "welcome", "server_logs", "rolemenu", "admin"],
   "message_content_intent": true,
   "members_intent": true,
   "scheduler": {
@@ -47,5 +47,8 @@
     "roles": [
       {"role_id": "ROLE_ID", "label": "Announcements", "emoji": "📢"}
     ]
+  },
+  "admin": {
+    "staff_role_id": "STAFF_ROLE_ID"
   }
 }

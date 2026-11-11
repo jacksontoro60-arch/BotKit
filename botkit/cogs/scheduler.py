@@ -8,11 +8,17 @@ DAYS = ["mon","tue","wed","thu","fri","sat","sun"]
 class Scheduler(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        cfg = bot.config.get("scheduler", {})
-        self.tz = ZoneInfo(cfg.get("timezone", "America/New_York"))
-        self.posts = cfg.get("posts", [])
         self.sent = set()
+        self.apply_config()
         self.loop.start()
+
+    def apply_config(self):
+        """Re-read posts and time zone. The loop picks this up on its next pass."""
+        cfg = self.bot.config.get("scheduler") or {}
+        tz = ZoneInfo(cfg.get("timezone", "America/New_York"))
+        posts = list(cfg.get("posts") or [])
+        self.tz = tz
+        self.posts = posts
 
     def cog_unload(self):
         self.loop.cancel()

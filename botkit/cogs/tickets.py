@@ -173,24 +173,36 @@ class TicketCloseView(discord.ui.View):
 class Tickets(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        cfg = bot.config.get("tickets", {})
-        self.staff_role_id = int(cfg["staff_role_id"])
-        self.mode = normalize_mode(cfg.get("mode", "thread"))
-        self.title = cfg.get("title") or DEFAULT_TITLE
-        self.text = cfg.get("text") or DEFAULT_TEXT
         self.channel_id = None
         self.category_id = None
-        if self.mode == "thread":
+        self._opening = set()
+        self.apply_config()
+
+    def apply_config(self):
+        """Re-read ticket settings. Open and close buttons keep working; they call this cog."""
+        cfg = self.bot.config.get("tickets") or {}
+        staff_role_id = int(cfg["staff_role_id"])
+        mode = normalize_mode(cfg.get("mode", "thread"))
+        title = cfg.get("title") or DEFAULT_TITLE
+        text = cfg.get("text") or DEFAULT_TEXT
+        channel_id = None
+        category_id = None
+        if mode == "thread":
             if not cfg.get("channel_id"):
                 raise ValueError("tickets.channel_id is required when mode is 'thread'")
-            self.channel_id = int(cfg["channel_id"])
+            channel_id = int(cfg["channel_id"])
         else:
             if not cfg.get("category_id"):
                 raise ValueError("tickets.category_id is required when mode is 'channel'")
-            self.category_id = int(cfg["category_id"])
+            category_id = int(cfg["category_id"])
             if cfg.get("channel_id"):
-                self.channel_id = int(cfg["channel_id"])
-        self._opening = set()
+                channel_id = int(cfg["channel_id"])
+        self.staff_role_id = staff_role_id
+        self.mode = mode
+        self.title = title
+        self.text = text
+        self.channel_id = channel_id
+        self.category_id = category_id
 
     async def cog_load(self):
         self.bot.add_view(TicketOpenView(self))
