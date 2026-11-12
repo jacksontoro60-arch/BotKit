@@ -1,6 +1,6 @@
 {
   "guild_id": "YOUR_SERVER_ID",
-  "features": ["scheduler", "mcstatus_alert", "modflag", "purge_mine", "translate", "verify", "tickets", "welcome", "server_logs", "rolemenu", "admin"],
+  "features": ["scheduler", "mcstatus_alert", "modflag", "purge_mine", "translate", "verify", "tickets", "welcome", "server_logs", "rolemenu", "admin", "pricealerts"],
   "message_content_intent": true,
   "members_intent": true,
   "scheduler": {
@@ -50,5 +50,12 @@
   },
   "admin": {
     "staff_role_id": "STAFF_ROLE_ID"
+  },
+  "pricealerts": {
+    "channel_id": "CHANNEL_ID",
+    "interval_minutes": 5,
+    "market_hours_only": true,
+    "delivery": "channel",
+    "max_alerts_per_user": 10
   }
 }

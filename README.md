@@ -26,6 +26,9 @@ A modular Python Discord bot (discord.py 2.x). One codebase, and each server get
 | `server_logs` | Posts joins, leaves, message deletes, message edits, and role changes to a log channel | automatic |
 | `rolemenu` | Members add or remove allowed roles from a button row or select menu. The menu keeps working after restarts | `/rolemenu_setup` (admins) |
 | `admin` | Staff view and change routine settings from Discord. Changes are saved and applied live when that is safe. The bot token and `.env` are not readable or writable | `/settings show`, `/settings set` (staff) |
+| `pricealerts` | Members set one-shot stock price alerts. The bot polls prices on an interval (default 5 minutes, minimum 1), during US market hours unless set to 24/7, and posts in a channel or by DM. Symbols are checked in batches. No API key | `/alert add`, `/alert list`, `/alert remove`, `/price` |
+
+Price alerts are educational and are not financial advice.
 
 ## Quick setup: the wizard (recommended)
 
@@ -40,7 +43,7 @@ The wizard builds `config.json` and `.env` for a new client:
 1. Asks for the bot token with hidden input and writes it **only** to `.env` (other `.env` lines such as `DEEPL_API_KEY` are kept). The token is never printed or written to `config.json`.
 2. Checks the token against Discord (`GET /users/@me`) and prints the invite URL (scopes `bot` + `applications.commands`, permissions `361045781648` = View Channels, Send Messages, Manage Messages, Embed Links, Read Message History, Manage Roles, Manage Channels, View Audit Log, Manage Threads, Create Private Threads, Send Messages in Threads).
 3. Lists the servers the bot is in, then that server's text channels and roles, so you pick by number.
-4. Asks which of the 11 features to enable and their settings: scheduler posts, Minecraft address, mod channel, verify role (pick one, or type `c` to create a `Verified` role through the API), ticket staff role and whether tickets are private threads or channels, welcome channel and message, log channel, role-menu roles, the translate backend URL (it can test the URL for you), and the staff role that can use `/settings`.
+4. Asks which of the 12 features to enable and their settings: scheduler posts, Minecraft address, mod channel, verify role (pick one, or type `c` to create a `Verified` role through the API), ticket staff role and whether tickets are private threads or channels, welcome channel and message, log channel, role-menu roles, the translate backend URL (it can test the URL for you), the staff role that can use `/settings`, and for price alerts the channel or DM delivery, the poll interval, and whether to check only during US market hours.
 5. Writes `config.json`. If one already exists, it is first copied to `config.json.bak`.
 
 The bot has to be invited to the server before you run the wizard. If it's in no servers yet, the wizard prints the invite URL and stops.
@@ -67,7 +70,8 @@ Run these from the `botkit/` directory (`requirements.txt`, `bot.py`, and `setup
 2. Under **Privileged Gateway Intents**:
    - Enable **Message Content** only if you use `translate` auto-translation. This must match `"message_content_intent": true`. `server_logs` does not need it. Deletes and edits are logged from gateway events, and message text is included only when the intent is already on and the message is cached.
    - Enable **Server Members** if you use `welcome` or `server_logs`. This must match `"members_intent": true` (the wizard sets that when either feature is on, and the bot also turns the intent on if those features are listed). Discord disconnects with "Disallowed intent" if the portal toggle is off while the bot requests the intent.
-3. Invite the bot with scopes `bot` + `applications.commands`. The wizard URL asks for View Channels, Send Messages, Embed Links, Read Message History, Manage Messages (`purge_mine`), Manage Roles (`verify`, `rolemenu`), Manage Channels (`tickets` channel mode), View Audit Log (`server_logs`), and for thread tickets: Create Private Threads, Send Messages in Threads, and Manage Threads.
+   - `pricealerts` needs neither privileged intent. Leave both toggles off unless another feature needs them.
+3. Invite the bot with scopes `bot` + `applications.commands`. The wizard URL asks for View Channels, Send Messages, Embed Links, Read Message History, Manage Messages (`purge_mine`), Manage Roles (`verify`, `rolemenu`), Manage Channels (`tickets` channel mode), View Audit Log (`server_logs`), and for thread tickets: Create Private Threads, Send Messages in Threads, and Manage Threads. `pricealerts` needs no extra permission beyond Send Messages, which that invite already includes. DM delivery only arrives if the member allows DMs from server members.
 4. For `verify` and `rolemenu`: in Server Settings → Roles, drag the bot's role **above** every role it assigns. For thread tickets, give staff **Manage Threads** on the parent channel so they can see private threads. Channel-mode tickets grant the staff role access on each ticket channel instead.
 
 ## Configuration (`config.json`)
@@ -97,6 +101,13 @@ Run these from the `botkit/` directory (`requirements.txt`, `bot.py`, and `setup
 | `rolemenu.roles[]` | Up to 25 roles. Each has `role_id`, `label`, and an optional `emoji` |
 | `rolemenu.title` / `text` | Text of the role-menu embed |
 | `admin.staff_role_id` | Role that can use `/settings`, along with administrators and members who can manage channels or threads. If this is unset, the tickets staff role is used |
+| `pricealerts.channel_id` | Channel for triggered alerts when `delivery` is `channel` |
+| `pricealerts.interval_minutes` | How often to poll. Default 5, minimum 1, maximum 1440 |
+| `pricealerts.market_hours_only` | `true` (default) checks weekdays 9:30–16:00 America/New_York. `false` checks 24/7. Market holidays are not excluded |
+| `pricealerts.delivery` | `channel` (default) posts in the alerts channel and mentions the member. `dm` sends a direct message |
+| `pricealerts.max_alerts_per_user` | Cap per member. Default 10, maximum 50 |
+
+Saved alerts live in `data/pricealerts.json` next to that bot's `config.json`, so each hosted client keeps its own file. Writes are atomic. The quote source is the free `yfinance` library and needs no API key. Price alerts are educational and are not financial advice.
 
 Translation keys come only from the environment: `DEEPL_API_KEY` (Free keys ending in `:fx` automatically use the free endpoint) and `LIBRETRANSLATE_API_KEY`. The public libretranslate.com instance needs a paid API key. A self-hosted LibreTranslate server is free.
 
@@ -104,7 +115,7 @@ Translation keys come only from the environment: `DEEPL_API_KEY` (Free keys endi
 
 Turn on `admin` (the wizard asks for the staff role) and restart once so the cog loads. After that, staff use `/settings show` and `/settings set` in the configured server. Each change is written to `config.json` and applied to the running bot.
 
-Live settings: welcome channel and message; log channel and events; ticket mode, staff role, channel, category, and panel text; role-menu style, text, and roles; verify role, captcha, log channel, and panel text; mod-flag channel; Minecraft address, channel, and poll interval; scheduler time zone and posts; translate backend, URL, languages, and character cap; and the `/settings` staff role.
+Live settings: welcome channel and message; log channel and events; ticket mode, staff role, channel, category, and panel text; role-menu style, text, and roles; verify role, captcha, log channel, and panel text; mod-flag channel; Minecraft address, channel, and poll interval; scheduler time zone and posts; translate backend, URL, languages, and character cap; the `/settings` staff role; and price-alert channel, poll interval, market-hours toggle, channel or DM delivery, and the per-user cap.
 
 The Discord token, `.env`, and API keys cannot be viewed or changed from Discord. Which features are loaded, `guild_id`, and the two intent flags still need a config edit and a restart (intents also need the Developer Portal toggles). Run `/rolemenu_setup`, `/verify_setup`, or `/ticket_setup` again when you want an already-posted panel to show new text or new menu buttons. Clicks on the existing verify and ticket buttons use the saved role, channel, and captcha immediately.
 
@@ -175,7 +186,7 @@ Supervisor and local dashboard (`host.py`), from the repository root:
 python -m unittest discover -s tests -v
 ```
 
-Kit (translate routing, the verify role path, tickets, welcome, server logs, role menus, in-Discord settings, and the setup wizard), from `botkit/`:
+Kit (translate routing, the verify role path, tickets, welcome, server logs, role menus, in-Discord settings, price alerts, and the setup wizard), from `botkit/`:
 
 ```
 python -m unittest discover -s tests -v
@@ -188,6 +199,7 @@ GitHub Actions runs both on every push and pull request to `main` (Python 3.10 a
 - **Translate does nothing:** Message Content intent must be on in the portal **and** in config, the channel ID must be in `translate.channels`, and check the logs for backend errors (bad URL or key).
 - **Verify or the role menu can't change a role:** give the bot Manage Roles and move its role above the roles it assigns. After editing `rolemenu.roles` or `style`, run `/rolemenu_setup` again. A menu already posted keeps working across restarts while those roles stay in config.
 - **No MC alerts:** the first check only records the state, so alerts fire on the next change. Test with `/mcstatus`.
+- **Price alerts never fire:** `/price` checks the quote. By default the bot only polls on weekdays from 9:30 to 16:00 America/New_York, every `interval_minutes` (default 5, minimum 1). Set `market_hours_only` to false to check 24/7. A triggered alert is removed after it posts. DM delivery needs the member to allow DMs from server members. Price alerts are educational and are not financial advice.
 - **Tickets don't open:** thread mode needs Create Private Threads, Send Messages in Threads, and Manage Threads. Channel mode needs Manage Channels and a category id. Staff see private threads only with Manage Threads on the parent channel.
 - **Welcome or join/leave/role logs never fire:** turn on Server Members in the Developer Portal. `"members_intent"` must be true, or `welcome` / `server_logs` must be in `features` (the bot requests the intent either way).
 - **/settings says you can't use it:** the command only runs in the configured server, for the `admin` staff role (or the tickets staff role if that is unset), an administrator, or a member with Manage Channels or Manage Threads. The feature has to be in `features` and the bot restarted once before the command exists.

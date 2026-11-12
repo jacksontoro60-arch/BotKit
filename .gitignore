@@ -23,6 +23,7 @@ lt-venv/
 
 # Runtime / host state
 state/
+data/
 *.log
 *.lock
 .host.lock
