@@ -65,7 +65,7 @@ then move its folder out of `clients\` (keep a backup of `.env`/`config.json`).
 Replace files in `botkit\`, run the tests, then restart each client (`host.py restart <name>`), or
 restart everything with `Stop-ScheduledTask 'BotKit Host'; Start-ScheduledTask 'BotKit Host'`.
 ```powershell
-cd A:\botkit-host\botkit; ..\venv\Scripts\python.exe -m unittest discover -s tests   # 77 kit tests
+cd A:\botkit-host\botkit; ..\venv\Scripts\python.exe -m unittest discover -s tests   # 96 kit tests
 cd A:\botkit-host;        .\venv\Scripts\python.exe -m unittest discover -s tests   # 23 host tests
 ```
 Note: several restarts in a row can make Discord rate-limit the slash-command sync. The bot then

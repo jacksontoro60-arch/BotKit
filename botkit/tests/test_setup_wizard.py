@@ -68,6 +68,8 @@ FULL_ANSWERS = {
     "server_logs": {"channel": "mods", "events": ["join", "leave", "delete", "edit", "roles"]},
     "rolemenu": {"style": "buttons", "roles": [{"role": "Member", "label": "Member", "emoji": "✅"}]},
     "admin": {"staff_role": "Verified"},
+    "pricealerts": {"channel": "news", "interval_minutes": 15, "market_hours_only": False,
+                    "delivery": "channel", "max_alerts_per_user": 4},
 }
 
 
@@ -108,8 +110,9 @@ class Helpers(unittest.TestCase):
         self.assertEqual(sw.valid_timezone("America/New_York"), "America/New_York")
         with self.assertRaises(sw.WizardError): sw.valid_timezone("Mars/Base")
         self.assertEqual(sw.parse_features("1, translate"), ["scheduler", "translate"])
-        self.assertEqual(len(sw.parse_features("all")), 11)
+        self.assertEqual(len(sw.parse_features("all")), 12)
         self.assertEqual(sw.parse_features("11"), ["admin"])
+        self.assertEqual(sw.parse_features("12"), ["pricealerts"])
         with self.assertRaises(sw.WizardError): sw.parse_features("nope")
 
     def test_match_item(self):
@@ -206,6 +209,10 @@ class BuildNonInteractive(unittest.TestCase):
         self.assertEqual(cfg["rolemenu"]["style"], "buttons")
         self.assertEqual(cfg["rolemenu"]["roles"], [{"role_id": "21", "label": "Member", "emoji": "✅"}])
         self.assertEqual(cfg["admin"], {"staff_role_id": "23"})
+        self.assertEqual(cfg["pricealerts"], {
+            "delivery": "channel", "market_hours_only": False, "channel_id": "14",
+            "interval_minutes": 15, "max_alerts_per_user": 4,
+        })
         self.assertTrue(cfg["members_intent"])
         self.assertEqual(info["client_id"], "555")
         self.assertIn(f"permissions={sw.INVITE_PERMISSIONS}", info["invite_url"])
@@ -216,8 +223,10 @@ class BuildNonInteractive(unittest.TestCase):
         """The generated translate/verify sections are accepted by the real cogs."""
         from types import SimpleNamespace
         from cogs import rolemenu, server_logs, tickets, translate as tr, verify as vf, welcome
+        from cogs.pricealerts import AlertStore, PriceAlerts
         cfg, *_ = build(FULL_ANSWERS)
-        bot = SimpleNamespace(config=cfg, tree=MagicMock(), get_channel=MagicMock(), add_view=MagicMock())
+        bot = SimpleNamespace(config=cfg, tree=MagicMock(), get_channel=MagicMock(), add_view=MagicMock(),
+                              config_path=None, wait_until_ready=MagicMock())
         self.assertEqual(tr.Translate(bot).backend.url, "http://127.0.0.1:5000/translate")
         self.assertEqual(vf.Verify(bot).role_id, 23)
         self.assertEqual(tickets.Tickets(bot).staff_role_id, 23)
@@ -229,6 +238,14 @@ class BuildNonInteractive(unittest.TestCase):
         menu = rolemenu.RoleMenu(bot)
         self.assertEqual(menu.style, "buttons")
         self.assertEqual(menu.roles[0]["role_id"], 21)
+        with tempfile.TemporaryDirectory() as tmp:
+            alerts = PriceAlerts(bot, store=AlertStore(Path(tmp) / "pricealerts.json"))
+        self.assertEqual(alerts.channel_id, 14)
+        self.assertEqual(alerts.interval_minutes, 15)
+        self.assertFalse(alerts.market_hours_only)
+        self.assertEqual(alerts.delivery, "channel")
+        self.assertEqual(alerts.max_alerts, 4)
+        self.assertEqual(alerts.poll._sleep, 15 * 60)
 
     def test_create_role(self):
         a = dict(FULL_ANSWERS, features=["verify"], verify={"role": "create"})
@@ -325,6 +342,23 @@ class NewFeatureAnswers(unittest.TestCase):
         self.assertTrue(cfg["members_intent"])
         self.assertFalse(cfg["message_content_intent"])
 
+    def test_pricealerts_dm_clamps_interval_and_skips_intents(self):
+        cfg, *_ = build({
+            "token": FAKE_TOKEN,
+            "guild": "Demo",
+            "features": ["pricealerts"],
+            "pricealerts": {"delivery": "dm", "interval_minutes": 0, "max_alerts_per_user": 500,
+                            "market_hours_only": True},
+        })
+        self.assertEqual(cfg["features"], ["pricealerts"])
+        self.assertEqual(cfg["pricealerts"]["delivery"], "dm")
+        self.assertNotIn("channel_id", cfg["pricealerts"])
+        self.assertEqual(cfg["pricealerts"]["interval_minutes"], 1)
+        self.assertEqual(cfg["pricealerts"]["max_alerts_per_user"], 50)
+        self.assertTrue(cfg["pricealerts"]["market_hours_only"])
+        self.assertFalse(cfg["members_intent"])
+        self.assertFalse(cfg["message_content_intent"])
+
     def test_new_feature_errors(self):
         base = {"token": FAKE_TOKEN, "guild": "Demo"}
         with self.assertRaises(sw.WizardError):
@@ -340,6 +374,10 @@ class NewFeatureAnswers(unittest.TestCase):
                 {"role": "Member", "label": "A"}, {"role": "Member", "label": "B"}]}})
         with self.assertRaises(sw.WizardError):
             build({**base, "features": ["admin"]})
+        with self.assertRaises(sw.WizardError):
+            build({**base, "features": ["pricealerts"], "pricealerts": {"delivery": "channel"}})
+        with self.assertRaises(sw.WizardError):
+            build({**base, "features": ["pricealerts"], "pricealerts": {"delivery": "email", "channel": "news"}})
 
 
 class BuildInteractiveNewFeatures(unittest.TestCase):

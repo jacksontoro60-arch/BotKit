@@ -521,6 +521,7 @@ class IntentFlags(unittest.TestCase):
         self.assertEqual(self._flags({"features": ["welcome"], "message_content_intent": False}), "1 0")
         self.assertEqual(self._flags({"features": ["server_logs"], "members_intent": False, "message_content_intent": False}), "1 0")
         self.assertEqual(self._flags({"features": ["tickets", "rolemenu"], "message_content_intent": False}), "0 0")
+        self.assertEqual(self._flags({"features": ["pricealerts"], "members_intent": False, "message_content_intent": False}), "0 0")
 
 
 if __name__ == "__main__":

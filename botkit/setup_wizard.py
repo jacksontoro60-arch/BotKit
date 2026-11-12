@@ -26,10 +26,14 @@ Non-interactive answers file (every key is optional except the ones the chosen f
   "server_logs": {"channel": "mods", "events": ["join", "leave", "delete", "edit", "roles"]},
   "rolemenu": {"style": "buttons", "title": "Roles", "text": "...",
                "roles": [{"role": "Member", "label": "Member", "emoji": "✅"}]},
-  "admin": {"staff_role": "Staff"}
+  "admin": {"staff_role": "Staff"},
+  "pricealerts": {"channel": "alerts", "interval_minutes": 5, "market_hours_only": true,
+                  "delivery": "channel", "max_alerts_per_user": 10}
 }
 Tickets mode "channel" uses "category" instead of "channel". Role-menu style may be "select".
 The admin feature adds /settings for that staff role. It never reads or writes the bot token.
+pricealerts delivery "dm" does not need a channel. Quotes need no API key. Price alerts are
+educational and are not financial advice.
 Channels and roles can be given as an ID, a name, or a 1-based number from the wizard's list.
 """
 import argparse
@@ -51,6 +55,13 @@ from cogs.rolemenu import (
 )
 from cogs.server_logs import normalize_events
 from cogs.tickets import DEFAULT_TEXT as TICKET_TEXT, DEFAULT_TITLE as TICKET_TITLE, normalize_mode
+from cogs.pricealerts import (
+    DEFAULT_INTERVAL_MINUTES,
+    DEFAULT_MAX_ALERTS,
+    MAX_ALERTS_CAP,
+    MAX_INTERVAL_MINUTES,
+    MIN_INTERVAL_MINUTES,
+)
 from cogs.welcome import DEFAULT_MESSAGE as WELCOME_MESSAGE
 
 ROOT = Path(__file__).parent
@@ -58,7 +69,7 @@ API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://github.com/botkit, 1.0) BotKitSetupWizard"
 FEATURES = [
     "scheduler", "mcstatus_alert", "modflag", "purge_mine", "verify", "translate",
-    "tickets", "welcome", "server_logs", "rolemenu", "admin",
+    "tickets", "welcome", "server_logs", "rolemenu", "admin", "pricealerts",
 ]
 FEATURE_HELP = {
     "scheduler": "scheduled announcement posts",
@@ -72,6 +83,7 @@ FEATURE_HELP = {
     "server_logs": "log joins, leaves, edits, deletes, and role changes",
     "rolemenu": "self-assign roles from a button or select menu",
     "admin": "staff can view and change routine settings with /settings",
+    "pricealerts": "stock price alerts (/alert, /price). Educational, not financial advice",
 }
 # View Channel, Send Messages, Manage Messages, Embed Links, Read Message History, Manage Roles,
 # Manage Channels, View Audit Log, Manage Threads, Create Private Threads, Send Messages in Threads.
@@ -600,6 +612,38 @@ def build(src, api_factory=DiscordAPI, out=print, allow_create_role=True, url_ch
                         roles, role_label)
         cfg["admin"] = {"staff_role_id": str(role["id"])}
 
+    if "pricealerts" in features:
+        delivery = str(src.ask(
+            "pricealerts.delivery",
+            "Deliver price alerts in a channel or by DM? (channel/dm)",
+            "channel",
+        ) or "channel").strip().lower()
+        if delivery not in ("channel", "dm"):
+            raise WizardError("pricealerts.delivery must be 'channel' or 'dm'")
+        section = {
+            "delivery": delivery,
+            "market_hours_only": src.yes(
+                "Only check prices during regular US market hours (weekdays 9:30-16:00 America/New_York)?",
+                True, key="pricealerts.market_hours_only"),
+        }
+        if delivery == "channel":
+            section["channel_id"] = pick_channel("pricealerts.channel", "Channel for price alerts?")
+        raw_interval = src.ask(
+            "pricealerts.interval_minutes", "How often to check prices, in minutes", DEFAULT_INTERVAL_MINUTES)
+        try:
+            interval = int(raw_interval)
+        except (TypeError, ValueError):
+            raise WizardError("pricealerts interval must be a whole number of minutes")
+        section["interval_minutes"] = min(MAX_INTERVAL_MINUTES, max(MIN_INTERVAL_MINUTES, interval))
+        raw_cap = src.ask(
+            "pricealerts.max_alerts_per_user", "How many alerts can one member have?", DEFAULT_MAX_ALERTS)
+        try:
+            cap = int(raw_cap)
+        except (TypeError, ValueError):
+            raise WizardError("pricealerts max alerts must be a whole number")
+        section["max_alerts_per_user"] = min(MAX_ALERTS_CAP, max(1, cap))
+        cfg["pricealerts"] = section
+
     cfg["members_intent"] = "welcome" in features or "server_logs" in features
 
     info = {"bot": me["username"], "bot_id": str(me["id"]), "client_id": client_id, "invite_url": url,
@@ -678,6 +722,11 @@ def main(argv=None, api_factory=DiscordAPI, url_checker=check_translate_url):
         print("Reminder: /settings lets that staff role, administrators, and members who can manage "
               "channels or threads view and change routine settings. The bot token and .env cannot be "
               "read or changed there. Turning features or intents on or off still needs a restart.")
+    if "pricealerts" in cfg["features"]:
+        print("Reminder: price alerts are educational and are not financial advice. "
+              "They need no privileged intent and no API key. "
+              "Checks run during US market hours unless you turned that off. "
+              "DM delivery only arrives if that member allows DMs.")
     print("\nStart the bot with:  python bot.py")
     return 0
 

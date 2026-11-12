@@ -31,6 +31,12 @@ from cogs.rolemenu import MAX_ROLES, normalize_roles, normalize_style
 from cogs.server_logs import normalize_events
 from cogs.tickets import is_staff, normalize_mode
 from cogs.translate import TranslateError, make_backend
+from cogs.pricealerts import (
+    AlertError,
+    normalize_delivery,
+    normalize_interval_minutes,
+    normalize_max_alerts,
+)
 from cogs.welcome import DEFAULT_MESSAGE as WELCOME_MESSAGE
 
 log = logging.getLogger(__name__)
@@ -54,6 +60,7 @@ FEATURE_OF = {
     "mcstatus": "mcstatus_alert",
     "scheduler": "scheduler",
     "translate": "translate",
+    "pricealerts": "pricealerts",
 }
 COG_BY_FEATURE = {
     "admin": "Admin",
@@ -66,6 +73,7 @@ COG_BY_FEATURE = {
     "mcstatus_alert": "MCStatus",
     "scheduler": "Scheduler",
     "translate": "Translate",
+    "pricealerts": "PriceAlerts",
 }
 SECTION_ALIAS = {
     "logs": "server_logs",
@@ -74,6 +82,8 @@ SECTION_ALIAS = {
     "minecraft": "mcstatus",
     "mcstatus_alert": "mcstatus",
     "roles": "rolemenu",
+    "prices": "pricealerts",
+    "pricealert": "pricealerts",
 }
 NOTES = {
     "rolemenu.style": "Run /rolemenu_setup to update a menu that is already posted. New clicks use the saved roles now.",
@@ -87,6 +97,9 @@ NOTES = {
     "verify.captcha": "The verify button uses this captcha setting now.",
     "tickets.title": "Run /ticket_setup to repost the panel. New tickets already use the saved mode, channel, and staff role.",
     "tickets.text": "Run /ticket_setup to repost the panel. New tickets already use the saved mode, channel, and staff role.",
+    "pricealerts.interval_minutes": "The next price check uses this interval.",
+    "pricealerts.market_hours_only": "While this is on, prices are checked only on weekdays from 9:30 to 16:00 America/New_York. Holidays are not excluded.",
+    "pricealerts.delivery": "Channel posts go to the alerts channel and mention the member. DM delivery needs that member to allow DMs.",
 }
 
 
@@ -539,6 +552,45 @@ def _tr_channel(cfg, value, channel_id, channel_type, role_id, role_name, env):
     section["channels"] = channels
 
 
+def _price_error(exc):
+    raise SettingError(str(exc)) from None
+
+
+def _price_channel(cfg, value, channel_id, channel_type, role_id, role_name, env):
+    _obj(cfg, "pricealerts")["channel_id"] = _channel_id(channel_id, channel_type, value, "text")
+
+
+def _price_interval(cfg, value, channel_id, channel_type, role_id, role_name, env):
+    try:
+        minutes = normalize_interval_minutes(value)
+    except AlertError as exc:
+        _price_error(exc)
+    _obj(cfg, "pricealerts")["interval_minutes"] = minutes
+
+
+def _price_hours(cfg, value, channel_id, channel_type, role_id, role_name, env):
+    _obj(cfg, "pricealerts")["market_hours_only"] = _bool(value)
+
+
+def _price_delivery(cfg, value, channel_id, channel_type, role_id, role_name, env):
+    try:
+        delivery = normalize_delivery(value)
+    except AlertError as exc:
+        _price_error(exc)
+    section = _obj(cfg, "pricealerts")
+    if delivery == "channel" and not section.get("channel_id"):
+        raise SettingError("Set pricealerts.channel before delivering alerts in a channel.")
+    section["delivery"] = delivery
+
+
+def _price_cap(cfg, value, channel_id, channel_type, role_id, role_name, env):
+    try:
+        cap = normalize_max_alerts(value)
+    except AlertError as exc:
+        _price_error(exc)
+    _obj(cfg, "pricealerts")["max_alerts_per_user"] = cap
+
+
 def _admin_role(cfg, value, channel_id, channel_type, role_id, role_name, env):
     section = _obj(cfg, "admin")
     if value is not None and str(value).strip().lower() in ("none", "off", "clear") and role_id is None:
@@ -581,6 +633,11 @@ CATALOG = [
     _Spec("translate.default_target", "translate", "language for the right-click menu", _tr_target),
     _Spec("translate.max_chars", "translate", "per-message character cap", _tr_max),
     _Spec("translate.channel", "translate", "language for a channel, or off", _tr_channel),
+    _Spec("pricealerts.channel", "pricealerts", "channel for price alerts", _price_channel),
+    _Spec("pricealerts.interval_minutes", "pricealerts", "poll interval in minutes, at least 1", _price_interval),
+    _Spec("pricealerts.market_hours_only", "pricealerts", "true for US market hours, false for 24/7", _price_hours),
+    _Spec("pricealerts.delivery", "pricealerts", "channel or dm", _price_delivery),
+    _Spec("pricealerts.max_per_user", "pricealerts", "how many alerts one member can have", _price_cap),
 ]
 CATALOG_BY_KEY = {spec.key: spec for spec in CATALOG}
 
@@ -650,6 +707,18 @@ def _validate(feature, cfg, env):
         raw = (cfg.get("admin") or {}).get("staff_role_id")
         if raw not in (None, ""):
             _snowflake(raw)
+    elif feature == "pricealerts":
+        section = cfg.get("pricealerts") or {}
+        try:
+            delivery = normalize_delivery(section.get("delivery", "channel"))
+            normalize_interval_minutes(section.get("interval_minutes", 5))
+            normalize_max_alerts(section.get("max_alerts_per_user", 10))
+        except AlertError as exc:
+            _price_error(exc)
+        if delivery == "channel":
+            if section.get("channel_id") in (None, ""):
+                raise SettingError("Set pricealerts.channel before changing other price alert settings.")
+            _snowflake(section.get("channel_id"))
 
 
 def change_settings(config, setting, value=None, *, channel_id=None, channel_type=None,
@@ -795,6 +864,14 @@ def _section_lines(config, section):
                 lines.append(f"{_mention_channel(cid)} → {_clip(lang)}")
         lines.append("API keys stay in the environment and are not shown.")
         return lines
+    if section == "pricealerts":
+        cfg = config.get("pricealerts") or {}
+        return ["**pricealerts**",
+                f"pricealerts.channel: {_mention_channel(cfg.get('channel_id'))}",
+                f"pricealerts.interval_minutes: {cfg.get('interval_minutes', 5)}",
+                f"pricealerts.market_hours_only: {bool(cfg.get('market_hours_only', True))}",
+                f"pricealerts.delivery: {_clip(cfg.get('delivery') or 'channel')}",
+                f"pricealerts.max_per_user: {cfg.get('max_alerts_per_user', 10)}"]
     return []
 
 
@@ -816,7 +893,7 @@ def render_settings(config, section=None) -> str:
         body = ["Routine settings. Type a feature name into /settings set to filter the list.",
                 "scheduler and translate appear when you type those names."]
         for name in ("admin", "welcome", "server_logs", "tickets", "rolemenu", "verify",
-                     "modflag", "mcstatus", "scheduler", "translate"):
+                     "modflag", "mcstatus", "scheduler", "translate", "pricealerts"):
             feature = FEATURE_OF[name]
             if _enabled(config, feature):
                 body.append("")
